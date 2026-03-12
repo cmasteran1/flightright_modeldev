@@ -1,0 +1,779 @@
+#!/usr/bin/env python3
+# src/training/train_dep_bins_ordinal_catboost.py
+#
+# Ordinal/binned departure-delay probability model via calibrated P(delay >= thr).
+#
+# Pattern B (production-safe):
+#   - DO NOT joblib/pickle any custom Python classes.
+#   - Save a single deployable JOBLIB that is a plain dict:
+#       {
+#         "artifact_type": "dep_delay_bins_bundle_v1",
+#         "thresholds": [...],
+#         "bin_labels": [...],
+#         "bin_weights_minutes": [...],
+#         "severity_weights": [...],
+#         "categorical_features": [...],
+#         "numeric_features": [...],
+#         "feature_order": [...],
+#         "calibrators": {thr: CalibratedClassifierCV, ...},
+#         "registry": {thr: {"model_path": "...cbm", "cal_path": "...joblib"}, ...},
+#         "versions": {...},
+#         "created_utc": "...",
+#       }
+#
+# Runtime/inference code loads this dict and implements:
+#   - enforce_monotone_ge_probs
+#   - ge_to_bins
+#   - expected_delay = sum(P_bin * bin_weights_minutes)
+#   - severity_score = sum(P_bin * severity_weights)
+#
+# Run from REPO_ROOT (legacy):
+#   python src/training/train_dep_bins_ordinal_catboost.py \
+#       data/models/dep_bins_WN_config.json
+#
+# NEW (config-only):
+#   python src/training/train_dep_bins_ordinal_catboost.py data/models/dep_bins_WN_config.json
+#
+import os, sys, json, time, signal, faulthandler
+from pathlib import Path
+from typing import Dict, List, Any
+from datetime import datetime, timezone as dt_timezone
+
+import numpy as np
+import pandas as pd
+
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import (
+    classification_report, confusion_matrix,
+    roc_auc_score, roc_curve, log_loss, accuracy_score
+)
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.frozen import FrozenEstimator
+import joblib
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+from catboost import CatBoostClassifier, Pool
+
+
+REPO_ROOT = Path.cwd()
+DATA_ROOT = (REPO_ROOT.parent / "flightrightdata").resolve()
+
+def _as_data_path(p: Path) -> Path:
+    """If p is relative, treat it as DATA_ROOT-relative."""
+    return p if p.is_absolute() else (DATA_ROOT / p).resolve()
+
+
+FAST = os.getenv("FAST_TRAIN", "0") == "1"
+NO_PLOTS = os.getenv("NO_PLOTS", "0") == "1"
+TRACE_EVERY_SEC = int(os.getenv("TRACE_EVERY_SEC", "0"))
+
+_t0 = time.time()
+def _now():
+    return time.strftime("%Y-%m-%d %H:%M:%S")
+
+_last_step_t = time.time()
+def log(msg, *, step=False):
+    global _last_step_t
+    now = time.time()
+    total = now - _t0
+    delta = now - _last_step_t
+    if step:
+        _last_step_t = now
+    print(f"[{_now()} +{total:7.2f}s D{delta:6.2f}s] {msg}", flush=True)
+
+def enable_periodic_traces():
+    if TRACE_EVERY_SEC > 0:
+        faulthandler.dump_traceback_later(TRACE_EVERY_SEC, repeat=True)
+        log(f"[trace] periodic faulthandler enabled every {TRACE_EVERY_SEC}s")
+
+def enable_usr1_trace():
+    try:
+        faulthandler.register(signal.SIGUSR1, file=sys.stderr, all_threads=True)
+        log("[trace] SIGUSR1 handler registered (kill -USR1 <pid> to dump stacks)")
+    except Exception as e:
+        log(f"[trace] failed to register SIGUSR1 handler: {e}")
+
+
+# ------------------------------ utils ------------------------------
+
+def best_threshold_youden(y_true, y_proba):
+    fpr, tpr, thr = roc_curve(y_true, y_proba)
+    j = tpr - fpr
+    i = int(np.argmax(j))
+    return float(thr[i]), float(tpr[i]), float(fpr[i])
+
+def as_str(series: pd.Series) -> pd.Series:
+    s = series.astype("object")
+    s = s.where(~pd.isna(s), "Unknown")
+    s = s.map(lambda v: "Unknown" if str(v).strip().lower() in ("", "nan", "none") else str(v))
+    return s.astype("object")
+
+def reliability_table(y_true, p_pred, n_bins=10):
+    y_true = pd.Series(y_true).reset_index(drop=True)
+    p_pred = pd.Series(p_pred).reset_index(drop=True).clip(0, 1)
+
+    bins = pd.interval_range(start=0.0, end=1.0, periods=n_bins, closed="right")
+    cuts = pd.cut(p_pred, bins, include_lowest=True)
+    out = (
+        pd.DataFrame({"y": y_true, "p": p_pred, "bin": cuts})
+        .groupby("bin", observed=True)
+        .agg(count=("y", "size"), mean_pred=("p", "mean"), empirical_pos_rate=("y", "mean"))
+        .reset_index()
+    )
+    out["bin_left"]  = out["bin"].apply(lambda iv: iv.left if pd.notna(iv) else np.nan)
+    out["bin_right"] = out["bin"].apply(lambda iv: iv.right if pd.notna(iv) else np.nan)
+    out["bin_mid"]   = (out["bin_left"].astype(float) + out["bin_right"].astype(float)) / 2.0
+    return out
+
+def plot_reliability(tag, y_true, p_pred, outdir: Path, n_bins=10):
+    tab = reliability_table(y_true, p_pred, n_bins=n_bins)
+    fig, ax = plt.subplots(figsize=(6, 5))
+    ax.plot([0, 1], [0, 1], linestyle="--", linewidth=1, label="perfect")
+    ax.plot(tab["mean_pred"], tab["empirical_pos_rate"], marker="o", linewidth=1.5, label="model")
+    ax.set_xlabel("Predicted probability")
+    ax.set_ylabel("Empirical positive rate")
+    ax.set_title(f"Reliability curve ({tag})")
+    ax.legend(loc="best")
+    fig.tight_layout()
+
+    png_path = outdir / f"calibration_{tag}.png"
+    csv_path = outdir / f"calibration_{tag}_table.csv"
+    fig.savefig(png_path, dpi=150)
+    plt.close(fig)
+    tab.drop(columns=["bin"], errors="ignore").to_csv(csv_path, index=False)
+    log(f"[SAVE] reliability plot -> {png_path}")
+    log(f"[SAVE] reliability table -> {csv_path}")
+
+def enforce_monotone_ge_probs(p_ge: np.ndarray) -> np.ndarray:
+    p = p_ge.copy()
+    for j in range(1, p.shape[1]):
+        p[:, j] = np.minimum(p[:, j], p[:, j-1])
+    return p
+
+def ge_to_bins(p_ge15, p_ge30, p_ge45, p_ge60):
+    p_ge = enforce_monotone_ge_probs(np.vstack([p_ge15, p_ge30, p_ge45, p_ge60]).T)
+    p15, p30, p45, p60 = p_ge[:, 0], p_ge[:, 1], p_ge[:, 2], p_ge[:, 3]
+
+    p_lt15  = 1.0 - p15
+    p_15_30 = np.maximum(0.0, p15 - p30)
+    p_30_45 = np.maximum(0.0, p30 - p45)
+    p_45_60 = np.maximum(0.0, p45 - p60)
+    p_ge60  = np.maximum(0.0, p60)
+
+    P = np.vstack([p_lt15, p_15_30, p_30_45, p_45_60, p_ge60]).T
+    Z = P.sum(axis=1, keepdims=True)
+    Z[Z == 0] = 1.0
+    return P / Z
+
+def true_bin_from_delay(dep_delay_min: pd.Series) -> pd.Series:
+    d = pd.to_numeric(dep_delay_min, errors="coerce").fillna(0.0)
+    bins = pd.cut(
+        d,
+        bins=[-np.inf, 15, 30, 45, 60, np.inf],
+        labels=["< 15 min", "15-30 min", "30-45 min", "45-60 min", ">= 60 min"],
+        right=False
+    )
+    return bins.astype("object")
+
+def make_reason_row(row) -> str:
+    reasons = []
+    try:
+        if pd.notna(row.get("flightnum_od_low_support")) and int(row["flightnum_od_low_support"]) == 1:
+            reasons.append("limited flight-number history")
+    except Exception:
+        pass
+
+    try:
+        v = row.get("flightnum_od_depdelay_mean_lastN")
+        if pd.notna(v) and float(v) >= 10:
+            reasons.append("this flight/route often departs late")
+    except Exception:
+        pass
+
+    try:
+        v = row.get("carrier_depdelay_mean_lastNdays")
+        if pd.notna(v) and float(v) >= 10:
+            reasons.append("carrier delays elevated recently")
+    except Exception:
+        pass
+
+    try:
+        v = row.get("carrier_origin_depdelay_mean_lastNdays")
+        if pd.notna(v) and float(v) >= 10:
+            reasons.append("origin station running late recently")
+    except Exception:
+        pass
+
+    try:
+        v = row.get("origin_congestion_3h_total")
+        if pd.notna(v) and float(v) >= 30:
+            reasons.append("busy origin (recent congestion)")
+    except Exception:
+        pass
+
+    try:
+        lf = row.get("od_month_load_factor_prev1")
+        if pd.notna(lf) and float(lf) >= 0.85:
+            reasons.append("typically high load factor (prior month)")
+    except Exception:
+        pass
+
+    try:
+        w = row.get("origin_daily_weathercode")
+        if pd.notna(w):
+            reasons.append("weather that day")
+    except Exception:
+        pass
+
+    if not reasons:
+        return "no strong delay signals detected"
+    return "; ".join(reasons[:3])
+
+def fmt_probs(p_ge15, p_ge30, p_ge45, p_ge60) -> str:
+    def f(x):
+        if x is None or (isinstance(x, float) and np.isnan(x)):
+            return "nan"
+        return f"{float(x):.3f}"
+    return f"P>=15={f(p_ge15)}, P>=30={f(p_ge30)}, P>=45={f(p_ge45)}, P>=60={f(p_ge60)}"
+
+def _split_unbalanced_for_cal_and_eval(df_unbal: pd.DataFrame, *, cal_size: float, seed: int):
+    if len(df_unbal) < 20:
+        return df_unbal.copy(), df_unbal.copy()
+
+    d = pd.to_numeric(df_unbal.get("DepDelayMinutes"), errors="coerce").fillna(0.0)
+    y15 = (d >= 15).astype(int).values
+    idx = np.arange(len(df_unbal))
+
+    cal_size = float(cal_size)
+    cal_size = min(max(cal_size, 0.05), 0.95)
+
+    idx_cal, idx_eval, _, _ = train_test_split(
+        idx, y15,
+        test_size=(1.0 - cal_size),
+        random_state=int(seed),
+        stratify=y15
+    )
+    df_cal = df_unbal.iloc[idx_cal].reset_index(drop=True)
+    df_eval = df_unbal.iloc[idx_eval].reset_index(drop=True)
+    return df_cal, df_eval
+
+def _load_json(path: Path) -> dict:
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+def _looks_like_json(p: Path) -> bool:
+    return p.suffix.lower() == ".json"
+
+def _resolve_run_args(argv):
+    """
+    Supported invocations:
+      1) script CONFIG.json
+      2) script INPUT.parquet OUTDIR
+      3) script INPUT.parquet OUTDIR CONFIG.json
+    Returns: (INPUT, OUTDIR, cfg_path_or_None)
+    """
+    if len(argv) == 2:
+        p = Path(argv[1])
+        if not _looks_like_json(p):
+            raise SystemExit("Config-only mode requires a .json file: python ... train_dep_bins_...py path/to/config.json")
+        cfg = _load_json(p)
+        in_path = cfg.get("input_features_path") or cfg.get("input_features_unbalanced_path")
+        outdir = cfg.get("outdir") or cfg.get("output_dir")
+        if not in_path or not outdir:
+            raise SystemExit("Config-only mode requires cfg['input_features_path'] (or input_features_unbalanced_path) and cfg['outdir'].")
+        return Path(in_path), Path(outdir), p
+
+    if len(argv) == 3:
+        return Path(argv[1]), Path(argv[2]), None
+
+    if len(argv) == 4:
+        return Path(argv[1]), Path(argv[2]), Path(argv[3])
+
+    raise SystemExit(
+        "Usage:\n"
+        "  python train_dep_bins_ordinal_catboost.py CONFIG.json\n"
+        "  python train_dep_bins_ordinal_catboost.py features_unbalanced.parquet outdir\n"
+        "  python train_dep_bins_ordinal_catboost.py features_unbalanced.parquet outdir config.json"
+    )
+
+
+def _safe_versions() -> Dict[str, str]:
+    versions: Dict[str, str] = {}
+    try:
+        import sklearn
+        versions["sklearn"] = getattr(sklearn, "__version__", "unknown")
+    except Exception:
+        versions["sklearn"] = "unknown"
+    try:
+        import catboost
+        versions["catboost"] = getattr(catboost, "__version__", "unknown")
+    except Exception:
+        versions["catboost"] = "unknown"
+    try:
+        versions["numpy"] = getattr(np, "__version__", "unknown")
+    except Exception:
+        versions["numpy"] = "unknown"
+    try:
+        versions["pandas"] = getattr(pd, "__version__", "unknown")
+    except Exception:
+        versions["pandas"] = "unknown"
+    try:
+        versions["joblib"] = getattr(joblib, "__version__", "unknown")
+    except Exception:
+        versions["joblib"] = "unknown"
+    return versions
+
+
+# ------------------------------ main ------------------------------
+
+def main():
+    enable_periodic_traces()
+    enable_usr1_trace()
+
+    INPUT, OUTDIR, CFG_PATH = _resolve_run_args(sys.argv)
+
+    # If user gives relative paths, treat them as DATA_ROOT-relative.
+    INPUT = _as_data_path(INPUT)
+    OUTDIR = _as_data_path(OUTDIR)
+
+    OUTDIR.mkdir(parents=True, exist_ok=True)
+
+    cfg = {
+        "thresholds": [15, 30, 45, 60],
+        "reliability_bins": 10,
+        "iterations": 4000,
+        "learning_rate": 0.03,
+        "depth": 8,
+        "l2_leaf_reg": 5.0,
+        "od_wait": 200,
+        "random_seed": 42,
+        "categorical_features": [
+            "Origin","Dest","od_pair","Reporting_Airline",
+            "dep_dow","sched_dep_hour","is_holiday","aircraft_type",
+            "origin_daily_weathercode","origin_dep_hour_weathercode",
+            "has_recent_arrival_turn_5h",
+        ],
+        "numeric_features": [
+            "origin_temp_max_K","origin_temp_min_K","origin_daily_precip_sum_mm",
+            "origin_daily_windspeed_max_kmh",
+            "origin_dep_temp_K","origin_dep_precip_mm","origin_dep_windspeed_kmh",
+            "flightnum_od_depdelay_mean_lastN","flightnum_od_support_count_lastNd",
+            "flightnum_od_low_support",
+            "carrier_depdelay_mean_lastNdays","carrier_origin_depdelay_mean_lastNdays",
+            "turn_time_hours",
+            "origin_congestion_3h_total",
+            "origin_airline_congestion_3h_total",
+            "tail_leg_num_day",
+            "flightnum_hours_since_first_departure_today",
+            "aircraft_seats_est",
+            "od_month_pax_per_flight_prev1",
+            "od_month_seats_per_flight_prev1",
+            "od_month_load_factor_prev1",
+        ],
+        "eval_features_path": "",
+        "per_threshold_train_paths": {},
+        "split": {"test_size": 0.20, "val_size": 0.20},
+        "unbalanced_cal_size": 0.50,
+        "max_rows": None,
+        "prediction_samples_n": 500,
+
+        # Weights for deployable outputs (optional)
+        "bin_weights_minutes": [7.5, 22.5, 37.5, 52.5, 75.0],
+        "severity_weights": [0.0, 1.0, 2.0, 3.0, 4.0],
+
+        # Pattern B: save a PLAIN-DICT joblib (no custom classes)
+        "deploy_bundle_joblib_name": "dep_delay_bins_bundle.joblib",
+    }
+
+    if CFG_PATH is not None:
+        cfg.update(_load_json(CFG_PATH))
+
+    if FAST:
+        cfg["iterations"] = min(int(cfg.get("iterations", 4000)), 1200)
+        cfg["depth"] = min(int(cfg.get("depth", 8)), 6)
+        cfg["od_wait"] = min(int(cfg.get("od_wait", 200)), 120)
+        cfg["learning_rate"] = max(float(cfg.get("learning_rate", 0.03)), 0.05)
+        log("[FAST] using lighter CatBoost settings")
+
+    THRESHOLDS = [int(x) for x in cfg.get("thresholds", [15, 30, 45, 60])]
+    REL_BINS = int(cfg.get("reliability_bins", 10))
+    SEED = int(cfg.get("random_seed", 42))
+
+    # Fixed labels for bins (5 bins)
+    bin_labels = ["< 15 min", "15-30 min", "30-45 min", "45-60 min", ">= 60 min"]
+
+    log(f"Loading data: {INPUT}")
+    df_all = pd.read_parquet(INPUT)
+    if cfg.get("max_rows"):
+        df_all = df_all.sample(n=int(cfg["max_rows"]), random_state=SEED).reset_index(drop=True)
+    log(f"Rows={len(df_all)} Cols={len(df_all.columns)}", step=True)
+
+    cat_feats = [c for c in cfg["categorical_features"] if c in df_all.columns]
+    num_feats = [c for c in cfg["numeric_features"] if c in df_all.columns]
+    dropped_missing = (len(cfg["categorical_features"]) - len(cat_feats)) + (len(cfg["numeric_features"]) - len(num_feats))
+    log(f"[features] cats={len(cat_feats)} nums={len(num_feats)} dropped_missing={dropped_missing}", step=True)
+
+    feature_order = cat_feats + num_feats
+
+    (OUTDIR / "resolved_features.json").write_text(
+        json.dumps({"categorical": cat_feats, "numeric": num_feats, "feature_order": feature_order}, indent=2)
+    )
+    log(f"[SAVE] resolved features -> {OUTDIR / 'resolved_features.json'}")
+
+    def build_X(df: pd.DataFrame) -> pd.DataFrame:
+        X = df[feature_order].copy()
+        for c in cat_feats:
+            X[c] = as_str(X[c])
+        for c in num_feats:
+            X[c] = pd.to_numeric(X[c], errors="coerce")
+            if X[c].isna().any():
+                med = X[c].median()
+                X[c] = X[c].fillna(med if pd.notna(med) else 0.0)
+        return X
+
+    def make_y(df: pd.DataFrame, thr: int) -> np.ndarray:
+        col = f"y_dep_ge{thr}"
+        if col in df.columns:
+            return df[col].astype(int).values
+        d = pd.to_numeric(df.get("DepDelayMinutes"), errors="coerce").fillna(0.0)
+        return (d >= int(thr)).astype(int).values
+
+    eval_path = str(cfg.get("eval_features_path") or "").strip()
+    if not eval_path:
+        raise ValueError("cfg['eval_features_path'] must be set to an unbalanced parquet for calibration/eval.")
+    eval_path = str(_as_data_path(Path(eval_path)))
+    df_unbal = pd.read_parquet(eval_path)
+    log(f"[unbalanced] loaded eval_features_path={eval_path} rows={len(df_unbal)}", step=True)
+
+    cal_frac = float(cfg.get("unbalanced_cal_size", 0.50))
+    df_cal_unbal, df_eval_unbal = _split_unbalanced_for_cal_and_eval(df_unbal, cal_size=cal_frac, seed=SEED)
+    unbal_source = f"eval_features_path:{eval_path}"
+    log(f"[unbalanced] split -> cal={len(df_cal_unbal)} eval={len(df_eval_unbal)} (cal_size={cal_frac:.2f})", step=True)
+
+    per_thr_paths = cfg.get("per_threshold_train_paths") or {}
+    per_thr_paths = {str(k): str(v) for k, v in per_thr_paths.items()}
+
+    if not per_thr_paths:
+        base_y = make_y(df_all, 15)
+        idx = np.arange(len(df_all))
+        test_size = float(cfg.get("split", {}).get("test_size", 0.20))
+        val_size = float(cfg.get("split", {}).get("val_size", 0.20))
+
+        log("[split] stratified splits on dep>=15 (single INPUT mode)", step=True)
+        idx_train, idx_test, _, _ = train_test_split(
+            idx, base_y, test_size=test_size, random_state=SEED, stratify=base_y
+        )
+        rel_val = val_size / max(1e-9, (1.0 - test_size))
+        idx_train, idx_val, _, _ = train_test_split(
+            idx_train, base_y[idx_train], test_size=rel_val, random_state=SEED, stratify=base_y[idx_train]
+        )
+        log(f"[split] sizes train={len(idx_train)} val={len(idx_val)} test={len(idx_test)}")
+
+        df_train_base = df_all.iloc[idx_train].reset_index(drop=True)
+        df_es_val     = df_all.iloc[idx_val].reset_index(drop=True)
+        df_test_base  = df_all.iloc[idx_test].reset_index(drop=True)
+    else:
+        df_train_base = df_es_val = df_test_base = None
+
+    registry: Dict[int, Dict[str, str]] = {}
+    cat_idx = [i for i, _c in enumerate(cat_feats)]
+
+    # Keep calibrators in-memory so we can export a single "bundle.joblib"
+    calibrators_inmem: Dict[int, Any] = {}
+
+    for thr in THRESHOLDS:
+        log("="*18 + f" Train dep >= {thr} " + "="*18, step=True)
+        thr_dir = OUTDIR / f"thr_{thr}"
+        thr_dir.mkdir(parents=True, exist_ok=True)
+
+        if per_thr_paths:
+            p = per_thr_paths.get(str(thr))
+            if not p:
+                raise ValueError(f"per_threshold_train_paths missing threshold {thr}")
+            p = str(_as_data_path(Path(p)))
+            df_tr = pd.read_parquet(p)
+
+            base_y = make_y(df_tr, thr)
+            idx = np.arange(len(df_tr))
+
+            idx_train, idx_temp, _, _ = train_test_split(
+                idx, base_y, test_size=0.40, random_state=SEED, stratify=base_y
+            )
+            idx_es, idx_test, _, _ = train_test_split(
+                idx_temp, base_y[idx_temp], test_size=0.50, random_state=SEED, stratify=base_y[idx_temp]
+            )
+
+            df_train = df_tr.iloc[idx_train].reset_index(drop=True)
+            df_es    = df_tr.iloc[idx_es].reset_index(drop=True)
+            df_test  = df_tr.iloc[idx_test].reset_index(drop=True)
+
+            log(f"[data] per-threshold train={p} sizes train={len(df_train)} earlystop={len(df_es)} test={len(df_test)}")
+        else:
+            df_train, df_es, df_test = df_train_base, df_es_val, df_test_base
+
+        df_cal_thr  = df_cal_unbal
+        df_eval_thr = df_eval_unbal
+
+        X_train = build_X(df_train)
+        y_train = make_y(df_train, thr)
+
+        X_es = build_X(df_es)
+        y_es = make_y(df_es, thr)
+
+        X_test_bal = build_X(df_test)
+        y_test_bal = make_y(df_test, thr)
+
+        X_cal = build_X(df_cal_thr)
+        y_cal = make_y(df_cal_thr, thr)
+
+        X_eval = build_X(df_eval_thr)
+        y_eval = make_y(df_eval_thr, thr)
+
+        train_pool = Pool(X_train, y_train, cat_features=cat_idx)
+        es_pool    = Pool(X_es,    y_es,    cat_features=cat_idx)
+
+        iters = int(cfg.get("iterations", 4000))
+        depth = int(cfg.get("depth", 8))
+        lr = float(cfg.get("learning_rate", 0.03))
+        l2 = float(cfg.get("l2_leaf_reg", 5.0))
+        od_wait = int(cfg.get("od_wait", 200))
+
+        log(f"[cb] fit start (iter={iters} depth={depth} lr={lr} l2={l2} od_wait={od_wait})")
+        clf = CatBoostClassifier(
+            loss_function="Logloss",
+            eval_metric="AUC",
+            learning_rate=lr,
+            depth=depth,
+            l2_leaf_reg=l2,
+            iterations=iters,
+            random_seed=SEED,
+            verbose=200,
+            od_type="Iter",
+            od_wait=od_wait,
+            thread_count=-1,
+        )
+        clf.fit(train_pool, eval_set=es_pool, use_best_model=True)
+        log("[cb] fit done")
+
+        log(f"[cal] isotonic calibration on UNBALANCED cal split (source={unbal_source}) size={len(df_cal_thr)}")
+        calibrator = CalibratedClassifierCV(FrozenEstimator(clf), method="isotonic")
+        calibrator.fit(X_cal, y_cal)
+        log("[cal] done")
+
+        calibrators_inmem[thr] = calibrator
+
+        cal_proba = calibrator.predict_proba(X_cal)[:, 1]
+        th, tpr, fpr = best_threshold_youden(y_cal, cal_proba)
+        auc_cal = roc_auc_score(y_cal, cal_proba) if len(np.unique(y_cal)) > 1 else float("nan")
+
+        test_bal_proba = calibrator.predict_proba(X_test_bal)[:, 1]
+        auc_test_bal = roc_auc_score(y_test_bal, test_bal_proba) if len(np.unique(y_test_bal)) > 1 else float("nan")
+        y_pred_bal = (test_bal_proba >= th).astype(int)
+
+        eval_proba = calibrator.predict_proba(X_eval)[:, 1]
+        auc_eval = roc_auc_score(y_eval, eval_proba) if len(np.unique(y_eval)) > 1 else float("nan")
+        y_pred_eval = (eval_proba >= th).astype(int)
+
+        log(f"[thr>={thr}] Youden threshold (from UNBAL cal)={th:.3f} | TPR={tpr:.3f} FPR={fpr:.3f}")
+        log(f"[thr>={thr}] AUC cal_unbal={auc_cal:.3f} | AUC test_bal_sanity={auc_test_bal:.3f} | AUC eval_unbal={auc_eval:.3f}")
+
+        print(f"[thr>={thr}] Classification report on BALANCED sanity test @ Youden(from unbal cal):", flush=True)
+        print(classification_report(y_test_bal, y_pred_bal), flush=True)
+        print(f"[thr>={thr}] Confusion matrix (balanced sanity):\n{confusion_matrix(y_test_bal, y_pred_bal)}", flush=True)
+
+        print(f"[thr>={thr}] Classification report on UNBALANCED eval @ Youden(from unbal cal):", flush=True)
+        print(classification_report(y_eval, y_pred_eval), flush=True)
+        print(f"[thr>={thr}] Confusion matrix (unbalanced eval):\n{confusion_matrix(y_eval, y_pred_eval)}", flush=True)
+
+        if not NO_PLOTS:
+            try:
+                plot_reliability(f"dep_ge{thr}_unbal_cal", y_cal, cal_proba, thr_dir, n_bins=REL_BINS)
+            except Exception as e:
+                log(f"[plot][WARN] reliability (unbal cal) failed: {e}")
+            try:
+                plot_reliability(f"dep_ge{thr}_unbal_eval", y_eval, eval_proba, thr_dir, n_bins=REL_BINS)
+            except Exception as e:
+                log(f"[plot][WARN] reliability (unbal eval) failed: {e}")
+
+        feature_names = feature_order
+
+        imp = clf.get_feature_importance(
+            Pool(X_train, y_train, cat_features=cat_idx),
+            type="LossFunctionChange"
+        )
+
+        imp_df = (
+            pd.DataFrame({
+                "feature": feature_names,
+                "importance": imp,
+            })
+            .sort_values("importance", ascending=False)
+        )
+
+        imp_path = thr_dir / "feature_importance_loss.csv"
+        imp_df.to_csv(imp_path, index=False)
+        log(f"[SAVE] feature importance -> {imp_path}")
+
+        # Save CatBoost model in native format (portable)
+        cat_model_path = thr_dir / f"catboost_dep_ge{thr}.cbm"
+        clf.save_model(str(cat_model_path))
+
+        # Save calibrator (sklearn)
+        cal_path = thr_dir / f"calibrated_dep_ge{thr}.joblib"
+        joblib.dump(calibrator, cal_path)
+
+        meta = {
+            "threshold": thr,
+            "threshold_youden": th,
+            "tpr_at_threshold": tpr,
+            "fpr_at_threshold": fpr,
+            "categorical_features": cat_feats,
+            "numeric_features": num_feats,
+            "feature_order": feature_order,
+            "input_features_parquet": str(INPUT),
+            "train_source": per_thr_paths.get(str(thr), str(INPUT)),
+            "unbalanced_source": unbal_source,
+            "unbalanced_cal_rows": int(len(df_cal_thr)),
+            "unbalanced_eval_rows": int(len(df_eval_thr)),
+            "unbalanced_cal_fraction": float(cal_frac),
+            "config_used": cfg,
+            "auc_cal_unbalanced": auc_cal,
+            "auc_test_balanced_sanity": auc_test_bal,
+            "auc_eval_unbalanced": auc_eval,
+        }
+        with open(thr_dir / "meta.json", "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=2)
+
+        registry[thr] = {
+            "model_path": str(cat_model_path),
+            "cal_path": str(cal_path),
+        }
+
+    # ------------------------------
+    # Multi-bin eval + save samples
+    # ------------------------------
+
+    df_eval = df_eval_unbal.copy().reset_index(drop=True)
+    X_eval = build_X(df_eval)
+    dep_delay = pd.to_numeric(df_eval.get("DepDelayMinutes"), errors="coerce").fillna(0.0)
+    df_eval = df_eval.copy()
+    df_eval["true_bin"] = true_bin_from_delay(dep_delay)
+
+    p_ge: Dict[int, np.ndarray] = {}
+    for thr in THRESHOLDS:
+        cal = calibrators_inmem[thr]
+        p_ge[thr] = cal.predict_proba(X_eval)[:, 1].astype(float)
+
+    # Convert to 5-bin distribution
+    if len(THRESHOLDS) != 4:
+        raise ValueError("This script currently expects exactly 4 thresholds (e.g., 15/30/45/60).")
+
+    P = ge_to_bins(p_ge[THRESHOLDS[0]], p_ge[THRESHOLDS[1]], p_ge[THRESHOLDS[2]], p_ge[THRESHOLDS[3]])
+    pred_idx = np.argmax(P, axis=1)
+    df_eval["pred_bin"] = pd.Series([bin_labels[i] for i in pred_idx], index=df_eval.index)
+
+    y_true_mc = pd.Categorical(df_eval["true_bin"], categories=bin_labels, ordered=True).codes
+    y_pred_mc = pred_idx
+    try:
+        ll = log_loss(y_true_mc, P, labels=list(range(len(bin_labels))))
+    except Exception:
+        ll = float("nan")
+    acc = accuracy_score(y_true_mc, y_pred_mc)
+    log(f"[BINS] UNBAL eval logloss={ll:.4f}  acc={acc:.4f}")
+
+    df_eval["reason"] = df_eval.apply(make_reason_row, axis=1)
+    df_eval["p_lt15"]  = P[:, 0]
+    df_eval["p_15_30"] = P[:, 1]
+    df_eval["p_30_45"] = P[:, 2]
+    df_eval["p_45_60"] = P[:, 3]
+    df_eval["p_ge60"]  = P[:, 4]
+    df_eval["p_ge15"] = p_ge[THRESHOLDS[0]]
+    df_eval["p_ge30"] = p_ge[THRESHOLDS[1]]
+    df_eval["p_ge45"] = p_ge[THRESHOLDS[2]]
+    df_eval["p_ge60_raw"] = p_ge[THRESHOLDS[3]]
+
+    # Weighted summaries (minutes + severity)
+    bin_weights_minutes = cfg.get("bin_weights_minutes", [7.5, 22.5, 37.5, 52.5, 75.0])
+    severity_weights = cfg.get("severity_weights", [0.0, 1.0, 2.0, 3.0, 4.0])
+
+    w_min = np.array(bin_weights_minutes, dtype=float)
+    w_sev = np.array(severity_weights, dtype=float)
+    if w_min.shape[0] != 5 or w_sev.shape[0] != 5:
+        raise ValueError("bin_weights_minutes and severity_weights must each be length 5.")
+
+    df_eval["expected_delay_minutes"] = (P * w_min[None, :]).sum(axis=1)
+    df_eval["severity_score"] = (P * w_sev[None, :]).sum(axis=1)
+
+    df_eval["predicted_delay_bin"] = df_eval["pred_bin"]
+    df_eval["delay_explanation"] = df_eval["reason"]
+    df_eval["delay_probabilities"] = [
+        fmt_probs(a, b, c, d) for a, b, c, d in zip(
+            df_eval["p_ge15"], df_eval["p_ge30"], df_eval["p_ge45"], df_eval["p_ge60_raw"]
+        )
+    ]
+
+    sample_n = int(cfg.get("prediction_samples_n", 500))
+    sample = df_eval.sample(n=min(sample_n, len(df_eval)), random_state=SEED).reset_index(drop=True)
+    sample_path = OUTDIR / "prediction_samples.parquet"
+    sample.to_parquet(sample_path, index=False)
+    log(f"[SAVE] prediction samples -> {sample_path}")
+
+    with open(OUTDIR / "registry.json", "w", encoding="utf-8") as f:
+        json.dump(registry, f, indent=2)
+    log(f"[SAVE] registry -> {OUTDIR / 'registry.json'}")
+
+    bins_meta = {
+        "bin_labels": bin_labels,
+        "thresholds": THRESHOLDS,
+        "eval_logloss": ll,
+        "eval_acc": acc,
+        "eval_features_path": str(cfg.get("eval_features_path") or ""),
+        "unbalanced_source": unbal_source,
+        "unbalanced_cal_rows": int(len(df_cal_unbal)),
+        "unbalanced_eval_rows": int(len(df_eval_unbal)),
+        "unbalanced_cal_fraction": float(cal_frac),
+        "bin_weights_minutes": bin_weights_minutes,
+        "severity_weights": severity_weights,
+        "feature_order": feature_order,
+    }
+    with open(OUTDIR / "bins_meta.json", "w", encoding="utf-8") as f:
+        json.dump(bins_meta, f, indent=2)
+    log(f"[SAVE] bins meta -> {OUTDIR / 'bins_meta.json'}")
+
+    # ------------------------------
+    # Pattern B: Save ONE deployable bundle.joblib (plain dict, no custom classes)
+    # ------------------------------
+
+    deploy_name = str(cfg.get("deploy_bundle_joblib_name", "dep_delay_bins_bundle.joblib")).strip() or "dep_delay_bins_bundle.joblib"
+    deploy_path = OUTDIR / deploy_name
+
+    bundle: Dict[str, Any] = {
+        "artifact_type": "dep_delay_bins_bundle_v1",
+        "created_utc": datetime.now(dt_timezone.utc).isoformat(),
+        "thresholds": THRESHOLDS,
+        "bin_labels": bin_labels,
+        "bin_weights_minutes": list(bin_weights_minutes),
+        "severity_weights": list(severity_weights),
+        "categorical_features": cat_feats,
+        "numeric_features": num_feats,
+        "feature_order": feature_order,
+        # NOTE: This is the key: we store calibrators directly, but as values in a dict,
+        # not wrapped in a custom class.
+        "calibrators": calibrators_inmem,
+        # Helpful paths for debugging / optional loading strategies
+        "registry": registry,
+        "versions": _safe_versions(),
+        # Keep the config used (useful for reproducibility)
+        "config_used": cfg,
+    }
+
+    joblib.dump(bundle, deploy_path)
+    log(f"[SAVE] deployable bundle -> {deploy_path}")
+
+    log("[OK] finished training dep bin distribution models")
+
+if __name__ == "__main__":
+    main()

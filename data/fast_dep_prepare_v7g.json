@@ -1,0 +1,59 @@
+{
+  "_comment": "v7g: 2023-only, NO row cap, random 15% holdout. v7c feature set (v4 + tail rolling + dest rolling). For full-scale training.",
+
+  "target": "dep",
+
+  "output_enriched_unbalanced_path": "data/intermediate/WN_full_v3_unbalanced.parquet",
+  "history_output_path": "data/intermediate/history_pool_dep_WN_v3_full.parquet",
+
+  "start_date": "2023-01-01",
+  "end_date": "2023-12-31",
+
+  "features_dep": {
+    "holiday_windows": {
+      "thanksgiving": 2,
+      "christmas": 3
+    },
+    "n_recent_flightnum_od": 30,
+    "low_support_leq": 2,
+    "rolling_windows_days": [1, 7, 14],
+
+    "hub_spillover": {
+      "hubs": ["DEN", "PHX", "BWI", "MDW", "BNA"]
+    },
+    "hub_weather": {
+      "enabled": false
+    },
+    "tail_history": {
+      "enabled": true
+    },
+    "dest_rolling": {
+      "enabled": true
+    },
+    "prior_leg": {
+      "enabled": false
+    }
+  },
+
+  "output_features_unbalanced_path": "data/processed/features_dep_WN_v7g_unbalanced.parquet",
+
+  "balance": {
+    "thresholds": [15, 30, 45, 60],
+    "delay_col": "DepDelayMinutes"
+  },
+
+  "feature_balance": {
+    "enabled": true,
+    "eval": {
+      "enabled": true,
+      "by": "random",
+      "eval_frac": 0.15,
+      "seed": 42,
+      "output_path": "data/processed/features_dep_WN_v7g_eval_unbalanced.parquet"
+    },
+    "thresholds": [15, 30, 45, 60],
+    "pos_frac": 0.50,
+    "seed": 42,
+    "output_template": "data/processed/train_dep_ge{thr}_balanced_WN_v7g.parquet"
+  }
+}

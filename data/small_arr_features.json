@@ -1,0 +1,20 @@
+{
+  "target": "arr",
+
+  "output_enriched_unbalanced_path": "../flightrightdata/data/intermediate/WN_small_unbalanced.parquet",
+  "history_output_path": "../flightrightdata/data/intermediate/history_pool_dep_WN_small.parquet",
+  "output_features_unbalanced_path": "../flightrightdata/data/processed/features_arr_WN_small_unbalanced.parquet",
+
+  "thresholds": [15, 30, 45, 60],
+
+  "feature_balance": {
+    "thresholds": [15, 30, 45, 60],
+    "pos_frac": 0.50,
+    "seed": 42,
+    "max_rows": 4000,
+    "output_template": "../flightrightdata/data/processed/train_arr_ge{thr}_balanced_WN_small.parquet",
+    "eval": {
+      "last_days": 28
+    }
+  }
+}
