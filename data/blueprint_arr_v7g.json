@@ -1,0 +1,43 @@
+{
+  "_comment": "Blueprint: v7g WN arrival delay feature pipeline. Reads the enriched parquet and history pool written by blueprint_dep_v7g (step 1), and the departure features written by blueprint_dep_v7g (step 2). Run features_arr.py only — prepare_dataset.py does not need to be run again.",
+  "_workflow": {
+    "prerequisite": "Complete both steps of blueprint_dep_v7g.json first.",
+    "step_1":       "python src/fetch_prune/features_arr.py data/blueprint_arr_v7g.json"
+  },
+  "_path_note": "All data paths use '../flightrightdata/data/...' (REPO_ROOT-relative) because features_arr.py resolves all paths against REPO_ROOT. These point to the same absolute files that blueprint_dep_v7g writes — e.g. '../flightrightdata/data/intermediate/WN_v7g_unbalanced.parquet' is the same file as 'data/intermediate/WN_v7g_unbalanced.parquet' in the dep blueprint (which uses DATA_ROOT-relative convention).",
+
+  "target": "arr",
+
+  "output_enriched_unbalanced_path": "../flightrightdata/data/intermediate/WN_v7g_unbalanced.parquet",
+  "history_output_path":             "../flightrightdata/data/intermediate/history_pool_dep_WN_v7g.parquet",
+
+  "start_date": "2023-01-01",
+  "end_date":   "2023-12-31",
+
+  "dep_features_unbalanced_path": "../flightrightdata/data/processed/features_dep_WN_v7g_unbalanced.parquet",
+
+  "thresholds": [15, 30, 45, 60],
+
+  "dest_weather": {
+    "enabled":          true,
+    "airports_csv":     "../flightrightdata/data/meta/airports.csv",
+    "hourly_cache_dir": "../flightrightdata/weather_cache_dest_hourly"
+  },
+
+  "output_features_unbalanced_path": "../flightrightdata/data/processed/features_arr_WN_v7g_unbalanced.parquet",
+
+  "feature_balance": {
+    "enabled": true,
+    "eval": {
+      "enabled":    true,
+      "by":         "random",
+      "eval_frac":  0.15,
+      "seed":       42,
+      "output_path": "../flightrightdata/data/processed/features_arr_WN_v7g_eval_unbalanced.parquet"
+    },
+    "thresholds":      [15, 30, 45, 60],
+    "pos_frac":        0.50,
+    "seed":            42,
+    "output_template": "../flightrightdata/data/processed/train_arr_ge{thr}_balanced_WN_v7g.parquet"
+  }
+}
