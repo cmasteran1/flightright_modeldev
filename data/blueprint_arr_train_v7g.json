@@ -1,0 +1,151 @@
+{
+  "_comment": "Blueprint: v7g WN arrival delay training config. Trains 4 ordinal CatBoost classifiers P(arr_delay >= 15/30/45/60 min). Run from REPO_ROOT after completing blueprint_dep_v7g.json (both steps) and blueprint_arr_v7g.json. Hub features use positional names (hub_0_, hub_1_, ...) matching the order of features_dep.hub_spillover.hubs in the feature config — for WN v7g: hub_0=DEN, hub_1=PHX, hub_2=BWI, hub_3=MDW, hub_4=BNA.",
+  "_workflow": {
+    "prerequisite": "All steps of blueprint_dep_v7g.json and blueprint_arr_v7g.json must be complete.",
+    "run": "python src/training/train_arr_bins_ordinal_catboost.py data/blueprint_arr_train_v7g.json"
+  },
+  "_path_note": "All relative paths resolved against DATA_ROOT (../flightrightdata/). Use 'data/processed/...' for DATA_ROOT-relative paths.",
+
+  "input_features_path": "data/processed/features_arr_WN_v7g_unbalanced.parquet",
+  "eval_features_path":  "data/processed/features_arr_WN_v7g_eval_unbalanced.parquet",
+  "outdir":              "data/models/arr_WN_v7g/",
+
+  "thresholds": [15, 30, 45, 60],
+
+  "feature_balance": {
+    "output_template": "data/processed/train_arr_ge{thr}_balanced_WN_v7g.parquet"
+  },
+
+  "training": {
+    "max_train_rows": 0,
+    "seed": 1337,
+    "exclude_feature_prefixes": ["y_dep_ge"],
+    "exclude_feature_columns": []
+  },
+
+  "eval": {
+    "last_days": 90,
+    "cal_size": 0.50
+  },
+
+  "catboost": {
+    "iterations":     1200,
+    "depth":          8,
+    "learning_rate":  0.08,
+    "l2_leaf_reg":    3.0,
+    "od_wait":        200,
+    "seed":           1337,
+    "verbose":        200,
+    "thread_count":   -1
+  },
+
+  "features": {
+    "categorical": [
+      "Reporting_Airline",
+      "Origin",
+      "Dest",
+      "DepTimeBlk",
+      "aircraft_type",
+      "Aircraft_Age_Bucket",
+      "origin_dep_hour_weathercode"
+    ],
+    "numeric": [
+      "CRSDepTime",
+      "CRSArrTime",
+      "CRSElapsedTime",
+      "Distance",
+
+      "arrdelay_mean_7d_fn_od",      "arrdelay_n_7d_fn_od",
+      "arrdelay_mean_14d_fn_od",     "arrdelay_n_14d_fn_od",
+      "arrdelay_median_7d_fn_od",
+      "arrdelay_mean_7d_car_od",     "arrdelay_n_7d_car_od",
+      "arrdelay_mean_14d_car_od",    "arrdelay_n_14d_car_od",
+      "arrdelay_median_7d_car_od",
+
+      "airtime_mean_7d_fn_od",       "airtime_n_7d_fn_od",
+      "airtime_mean_14d_fn_od",      "airtime_n_14d_fn_od",
+      "airtime_mean_7d_car_od",      "airtime_n_7d_car_od",
+      "airtime_mean_14d_car_od",     "airtime_n_14d_car_od",
+
+      "wo_slip_mean_7d_fn_od",       "wo_slip_n_7d_fn_od",
+      "wo_slip_mean_14d_fn_od",      "wo_slip_n_14d_fn_od",
+      "wo_slip_mean_7d_origin_blk",  "wo_slip_n_7d_origin_blk",
+      "wo_slip_mean_14d_origin_blk", "wo_slip_n_14d_origin_blk",
+
+      "dest_arrivals_pm60_sched",
+      "dest_airline_arrivals_pm60_sched",
+      "dest_arrivals_pm60_eta",
+      "dest_airline_arrivals_pm60_eta",
+
+      "dep_dow",
+      "sched_dep_hour",
+      "sched_arr_hour",
+
+      "dest_arr_temperature_2m",
+      "dest_arr_precipitation",
+      "dest_arr_windspeed_10m",
+      "dest_arr_windgusts_10m",
+      "dest_arr_visibility",
+      "dest_arr_cape",
+      "dest_arr_cloudcover",
+
+      "flightnum_od_depdelay_mean_last1",    "flightnum_od_depdelay_mean_last7",    "flightnum_od_depdelay_mean_last14",
+      "flightnum_od_depdelay_median_last1",  "flightnum_od_depdelay_median_last7",  "flightnum_od_depdelay_median_last14",
+      "flightnum_od_depdelay_std_last1",     "flightnum_od_depdelay_std_last7",     "flightnum_od_depdelay_std_last14",
+      "flightnum_od_support_count_last14d",  "flightnum_od_low_support_last14d",
+
+      "carrier_depdelay_mean_last1",         "carrier_depdelay_mean_last7",         "carrier_depdelay_mean_last14",
+      "carrier_depdelay_std_last1",          "carrier_depdelay_std_last7",          "carrier_depdelay_std_last14",
+
+      "carrier_origin_depdelay_mean_last1",  "carrier_origin_depdelay_mean_last7",  "carrier_origin_depdelay_mean_last14",
+
+      "origin_depdelay_mean_last1",          "origin_depdelay_mean_last7",          "origin_depdelay_mean_last14",
+
+      "origin_lateaircraft_rate_last1",      "origin_lateaircraft_rate_last7",      "origin_lateaircraft_rate_last14",
+      "carrier_lateaircraft_rate_last1",     "carrier_lateaircraft_rate_last7",     "carrier_lateaircraft_rate_last14",
+
+      "hub_0_depdelay_mean_last1",           "hub_0_depdelay_mean_last7",           "hub_0_depdelay_mean_last14",
+      "hub_0_lateaircraft_rate_last1",       "hub_0_lateaircraft_rate_last7",       "hub_0_lateaircraft_rate_last14",
+      "hub_1_depdelay_mean_last1",           "hub_1_depdelay_mean_last7",           "hub_1_depdelay_mean_last14",
+      "hub_1_lateaircraft_rate_last1",       "hub_1_lateaircraft_rate_last7",       "hub_1_lateaircraft_rate_last14",
+      "hub_2_depdelay_mean_last1",           "hub_2_depdelay_mean_last7",           "hub_2_depdelay_mean_last14",
+      "hub_2_lateaircraft_rate_last1",       "hub_2_lateaircraft_rate_last7",       "hub_2_lateaircraft_rate_last14",
+      "hub_3_depdelay_mean_last1",           "hub_3_depdelay_mean_last7",           "hub_3_depdelay_mean_last14",
+      "hub_3_lateaircraft_rate_last1",       "hub_3_lateaircraft_rate_last7",       "hub_3_lateaircraft_rate_last14",
+      "hub_4_depdelay_mean_last1",           "hub_4_depdelay_mean_last7",           "hub_4_depdelay_mean_last14",
+      "hub_4_lateaircraft_rate_last1",       "hub_4_lateaircraft_rate_last7",       "hub_4_lateaircraft_rate_last14",
+
+      "tail_depdelay_mean_last1",            "tail_depdelay_mean_last7",            "tail_depdelay_mean_last14",
+      "tail_lateaircraft_rate_last1",        "tail_lateaircraft_rate_last7",        "tail_lateaircraft_rate_last14",
+
+      "dest_depdelay_mean_last1",            "dest_depdelay_mean_last7",            "dest_depdelay_mean_last14",
+      "dest_lateaircraft_rate_last1",        "dest_lateaircraft_rate_last7",        "dest_lateaircraft_rate_last14",
+
+      "origin_congestion_3h_total",
+      "origin_airline_congestion_3h_total",
+
+      "tail_leg_num_day",
+      "turn_time_hours",
+      "is_holiday",
+
+      "origin_temp_max_K",
+      "origin_temp_min_K",
+      "origin_daily_precip_sum_mm",
+      "origin_daily_windspeed_max_kmh",
+      "origin_daily_windgusts_max_kmh",
+
+      "origin_dep_temp_K",
+      "origin_dep_precip_mm",
+      "origin_dep_windspeed_kmh",
+      "origin_dep_windgusts_kmh",
+      "origin_dep_visibility_m",
+      "origin_dep_cape_jkg",
+      "origin_dep_log1p_cape",
+      "origin_dep_cloudcover_pct"
+    ]
+  },
+
+  "deploy_bundle_joblib_name":  "arr_delay_bins_bundle_WN_v7g.joblib",
+  "eval_output_parquet_name":   "arr_eval_with_probs_WN_v7g.parquet",
+  "metrics_output_json_name":   "arr_train_metrics_WN_v7g.json"
+}
