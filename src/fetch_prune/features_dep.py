@@ -991,9 +991,15 @@ def add_wn_hub_spillover_from_history(
 
     All rolling stats use a 1-day shift (shift(1)) to prevent leakage.
 
-    New features (per hub H, per window W):
-      hub_{H}_depdelay_mean_last{W}
-      hub_{H}_lateaircraft_rate_last{W}   (only if LateAircraftDelay in history)
+    New features (per hub index I in enumerate(hubs), per window W):
+      hub_{I}_depdelay_mean_last{W}
+      hub_{I}_lateaircraft_rate_last{W}   (only if LateAircraftDelay in history)
+
+    Hub features are named by position (hub_0_, hub_1_, ...) rather than by IATA
+    code so that training configs are airline-agnostic — the same feature list works
+    for any airline as long as the config specifies the same number of hubs.  The
+    mapping from index → airport is recorded in the blueprint feature config under
+    features_dep.hub_spillover.hubs.
 
     Parameters
     ----------
@@ -1037,7 +1043,7 @@ def add_wn_hub_spillover_from_history(
     all_dates = hub_daily["FlightDate"].drop_duplicates().sort_values()
     date_df = pd.DataFrame({"FlightDate": all_dates})
 
-    for hub in hubs:
+    for i, hub in enumerate(hubs):
         h_sub = hub_daily[hub_daily["Origin"] == hub].set_index("FlightDate")
         h_sub = h_sub.reindex(all_dates)  # fill missing dates with NaN
 
@@ -1049,7 +1055,7 @@ def add_wn_hub_spillover_from_history(
                 .rolling(window=_w, min_periods=1)
                 .mean()
             )
-            date_df[f"hub_{hub}_depdelay_mean_last{w}"] = rolled_mean.values
+            date_df[f"hub_{i}_depdelay_mean_last{w}"] = rolled_mean.values
 
             if has_late_aircraft and "_la_rate" in h_sub.columns:
                 rolled_la = (
@@ -1058,9 +1064,9 @@ def add_wn_hub_spillover_from_history(
                     .rolling(window=_w, min_periods=1)
                     .mean()
                 )
-                date_df[f"hub_{hub}_lateaircraft_rate_last{w}"] = rolled_la.values
+                date_df[f"hub_{i}_lateaircraft_rate_last{w}"] = rolled_la.values
             else:
-                date_df[f"hub_{hub}_lateaircraft_rate_last{w}"] = np.nan
+                date_df[f"hub_{i}_lateaircraft_rate_last{w}"] = np.nan
 
     df["FlightDate"] = pd.to_datetime(df.get("FlightDate"), errors="coerce").dt.normalize()
     df = df.merge(date_df, on="FlightDate", how="left")
