@@ -58,6 +58,7 @@
     },
 
     "hub_spillover": {
+      "airline": "WN",
       "hubs": ["DEN", "PHX", "BWI", "MDW", "BNA"]
     },
     "hub_weather": {

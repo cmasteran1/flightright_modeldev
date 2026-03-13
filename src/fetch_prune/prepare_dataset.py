@@ -979,7 +979,12 @@ def build_and_write_history_pool(cfg: dict) -> Optional[Path]:
     # Strip start_date / end_date so the full lookback range loads without being
     # clipped by the training window.  The explicit date filter below re-applies
     # the correct history window (start_date - lookback_days  ..  end_date).
-    _hist_cfg = {k: v for k, v in cfg.items() if k not in ("start_date", "end_date")}
+    # Also strip airline filters: congestion and hub-spillover features are
+    # network-wide signals that should reflect all carriers operating at an
+    # airport, not just the target airline.  Route-level rolling features in
+    # features_dep.py self-filter via Reporting_Airline in their groupby keys.
+    _hist_cfg = {k: v for k, v in cfg.items()
+                 if k not in ("start_date", "end_date", "airlines", "single_airline")}
     hist = read_input_parquet(hist_paths, cfg=_hist_cfg, airports_set=airports)
     hist = canonicalize_bts_columns(hist)
     hist["FlightDate"] = pd.to_datetime(hist["FlightDate"], errors="coerce")

@@ -1797,7 +1797,15 @@ def main():
     hub_cfg = feat_cfg.get("hub_spillover") or {}
     hub_hubs = hub_cfg.get("hubs") or None  # explicit list wins
     if hub_hubs is None:
-        hub_airline = str(hub_cfg.get("airline") or "WN").upper()
+        explicit_airline = hub_cfg.get("airline")
+        if not explicit_airline:
+            print(
+                "[WARN] hub_spillover: neither 'hubs' nor 'airline' is set under "
+                "features_dep.hub_spillover in the config. Defaulting to the WN preset "
+                "['DEN','PHX','BWI','MDW','BNA']. Set features_dep.hub_spillover.airline "
+                "or features_dep.hub_spillover.hubs explicitly to suppress this warning."
+            )
+        hub_airline = str(explicit_airline or "WN").upper()
         hub_hubs = AIRLINE_HUB_PRESETS.get(hub_airline)
         if hub_hubs:
             print(f"[INFO] hub_spillover: using preset hubs for airline={hub_airline}: {hub_hubs}")
