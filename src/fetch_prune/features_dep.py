@@ -1099,7 +1099,6 @@ AIRLINE_HUB_PRESETS: Dict[str, List[str]] = {
 }
 
 # Alias without the WN-specific name so callers for other airlines read naturally.
-add_hub_spillover_from_history = None  # set after function definition below
 
 # Daily variables requested from Open-Meteo archive
 _HUB_DAILY_VARS = [
