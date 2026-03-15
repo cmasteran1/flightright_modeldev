@@ -10,9 +10,12 @@
 #  - History pool now includes both dep_dt_local and arr_dt_local (scheduled, local tz)
 
 import sys
+import os
 import json
 import glob
 import csv
+import time
+import random
 from pathlib import Path
 from datetime import datetime, time as dtime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -448,29 +451,43 @@ def _add_arr_dt_local_for_history_pool(
 
 # ------------------------------ HTTP helper ------------------------------
 
-def _req_with_backoff(url, params, max_tries=8):
+def _req_with_backoff(url, params, max_tries: Optional[int] = None):
     import requests
-    import time as _time
 
-    backoff = 1.8
-    delay = 1.0
+    if max_tries is None:
+        max_tries = OPEN_METEO_MAX_HTTP_TRIES
+
+    backoff = 2.0
+    delay = 5.0
     last_status = None
     last_text = None
     last_exc = None
 
     for i in range(1, max_tries + 1):
         try:
-            r = requests.get(url, params=params, timeout=60)
+            _sleep_before_open_meteo_request()
+
+            r = requests.get(url, params=params, timeout=90)
             last_status = r.status_code
-            if r.status_code == 200:
-                return r
 
             try:
                 last_text = r.text[:600]
             except Exception:
                 last_text = ""
 
-            if r.status_code in (429, 500, 502, 503, 504):
+            if r.status_code == 200:
+                return r
+
+            # Most important change:
+            # DO NOT keep retrying 429s. Once quota is exceeded, retries only waste cluster time.
+            if r.status_code == 429:
+                raise RuntimeError(
+                    "Open-Meteo returned HTTP 429 (rate/quota exceeded). "
+                    "Stopping immediately to avoid wasting remote compute.\n"
+                    f"Response: {last_text}"
+                )
+
+            if r.status_code in (500, 502, 503, 504):
                 retry_after = None
                 try:
                     ra = r.headers.get("Retry-After")
@@ -482,23 +499,86 @@ def _req_with_backoff(url, params, max_tries=8):
                 sleep_s = delay
                 if retry_after is not None and retry_after > sleep_s:
                     sleep_s = retry_after
+
                 print(f"[WARN] HTTP {r.status_code} attempt {i}/{max_tries}. sleep {sleep_s:.1f}s")
-                _time.sleep(sleep_s)
-                delay = min(120, delay * backoff)
+                time.sleep(sleep_s)
+                delay = min(300, delay * backoff)
                 continue
 
             raise RuntimeError(f"Request failed HTTP {r.status_code}. Response: {last_text}")
 
+        except RuntimeError:
+            raise
         except Exception as e:
             last_exc = e
+            if i == max_tries:
+                break
             print(f"[WARN] Request exception attempt {i}/{max_tries}: {repr(e)}. sleep {delay:.1f}s")
-            _time.sleep(delay)
-            delay = min(120, delay * backoff)
+            time.sleep(delay + random.uniform(0.25, 1.0))
+            delay = min(300, delay * backoff)
 
     raise RuntimeError(
         "Request failed after retries.\n"
         f"Last status={last_status}, last_response={last_text}, last_exception={repr(last_exc)}"
     )
+
+# ------------------------------ conservative Open-Meteo request controls ------------------------------
+
+# The goal here is to be deliberately conservative on remote jobs:
+#   - space requests out heavily
+#   - never retry 429s (quota is already exhausted)
+#   - fail early if too many uncached requests would be needed
+#
+# Override via environment variables if needed on the cluster:
+#   OPEN_METEO_MIN_SECONDS_BETWEEN_CALLS=20
+#   OPEN_METEO_MAX_HTTP_TRIES=4
+#   OPEN_METEO_MAX_NEW_REQUESTS_PER_RUN=40
+
+OPEN_METEO_MIN_SECONDS_BETWEEN_CALLS = float(os.getenv("OPEN_METEO_MIN_SECONDS_BETWEEN_CALLS", "20"))
+OPEN_METEO_MAX_HTTP_TRIES = int(os.getenv("OPEN_METEO_MAX_HTTP_TRIES", "4"))
+OPEN_METEO_MAX_NEW_REQUESTS_PER_RUN = int(os.getenv("OPEN_METEO_MAX_NEW_REQUESTS_PER_RUN", "40"))
+
+_OPEN_METEO_STATE = {
+    "last_request_monotonic": None,
+    "request_attempts_this_run": 0,
+}
+
+
+def _weather_cache_path(
+    cache_dir: Path,
+    airport: str,
+    start: str,
+    end: str,
+    tz: str,
+    *,
+    granularity: str,
+    prefix: str,
+) -> Path:
+    """
+    IMPORTANT:
+    Include prefix in filename so origin hourly and dest hourly do not collide
+    when they share the same cache directory.
+    """
+    safe_tz = tz.replace("/", "__")
+    safe_prefix = prefix.rstrip("_")
+    return cache_dir / f"{airport}_{start}_{end}_{safe_tz}_{granularity}_{safe_prefix}.parquet"
+
+
+def _sleep_before_open_meteo_request():
+    last = _OPEN_METEO_STATE["last_request_monotonic"]
+    if last is None:
+        return
+
+    elapsed = time.monotonic() - last
+    min_gap = OPEN_METEO_MIN_SECONDS_BETWEEN_CALLS
+    if elapsed < min_gap:
+        # small jitter so repeated jobs do not synchronize
+        sleep_s = (min_gap - elapsed) + random.uniform(0.25, 1.0)
+        print(f"[INFO] Open-Meteo pacing sleep {sleep_s:.1f}s")
+        time.sleep(sleep_s)
+
+
+
 
 
 # ------------------------------ weather (daily) ------------------------------
@@ -549,10 +629,20 @@ def add_origin_weather_daily(df, airports_meta: Dict[str, Tuple[float, float, st
     needed = sorted(pd.unique(df["Origin"].astype(str).str.upper()))
     frames = []
 
+    uncached = 0
+    cache_paths = {}
     for ap in needed:
         lat, lon, tz = airports_meta[ap]
-        safe_tz = tz.replace("/", "__")
-        cache_path = cache_dir / f"{ap}_{start}_{end}_{safe_tz}_daily.parquet"
+        cp = _weather_cache_path(cache_dir, ap, start, end, tz, granularity="daily", prefix="origin")
+        cache_paths[ap] = cp
+        if not cp.exists():
+            uncached += 1
+
+
+    for ap in needed:
+        lat, lon, tz = airports_meta[ap]
+        cache_path = cache_paths[ap]
+
         if cache_path.exists():
             wx = pd.read_parquet(cache_path)
         else:
@@ -568,7 +658,6 @@ def add_origin_weather_daily(df, airports_meta: Dict[str, Tuple[float, float, st
         o = pd.concat(frames, ignore_index=True)
         df = df.merge(o, on=["FlightDate", "Origin"], how="left")
     return df
-
 
 def add_dest_weather_daily(df, airports_meta: Dict[str, Tuple[float, float, str]], cache_dir: str):
     """
@@ -587,10 +676,20 @@ def add_dest_weather_daily(df, airports_meta: Dict[str, Tuple[float, float, str]
     needed = sorted(pd.unique(df["Dest"].astype(str).str.upper()))
     frames = []
 
+    uncached = 0
+    cache_paths = {}
     for ap in needed:
         lat, lon, tz = airports_meta[ap]
-        safe_tz = tz.replace("/", "__")
-        cache_path = cache_dir / f"{ap}_{start}_{end}_{safe_tz}_daily.parquet"
+        cp = _weather_cache_path(cache_dir, ap, start, end, tz, granularity="daily", prefix="dest")
+        cache_paths[ap] = cp
+        if not cp.exists():
+            uncached += 1
+
+
+    for ap in needed:
+        lat, lon, tz = airports_meta[ap]
+        cache_path = cache_paths[ap]
+
         if cache_path.exists():
             wx = pd.read_parquet(cache_path)
         else:
@@ -606,8 +705,6 @@ def add_dest_weather_daily(df, airports_meta: Dict[str, Tuple[float, float, str]
         d = pd.concat(frames, ignore_index=True)
         df = df.merge(d, on=["FlightDate", "Dest"], how="left")
     return df
-
-
 # ------------------------------ weather (hourly at dep time + hourly at arr time) ------------------------------
 
 HOURLY_WEATHER_VARS = [
@@ -673,10 +770,27 @@ def add_origin_weather_hourly_at_dep(df, airports_meta: Dict[str, Tuple[float, f
     needed = sorted(pd.unique(df["Origin"].astype(str).str.upper()))
     frames = []
 
+    uncached = 0
+    cache_paths = {}
     for ap in needed:
         lat, lon, tz = airports_meta[ap]
-        safe_tz = tz.replace("/", "__")
-        cache_path = cache_dir / f"{ap}_{start}_{end}_{safe_tz}_hourly.parquet"
+        cp = _weather_cache_path(
+            cache_dir,
+            ap,
+            start,
+            end,
+            tz,
+            granularity="hourly",
+            prefix="origin_dep",
+        )
+        cache_paths[ap] = cp
+        if not cp.exists():
+            uncached += 1
+
+
+    for ap in needed:
+        lat, lon, tz = airports_meta[ap]
+        cache_path = cache_paths[ap]
 
         if cache_path.exists():
             wx = pd.read_parquet(cache_path)
@@ -704,8 +818,6 @@ def add_origin_weather_hourly_at_dep(df, airports_meta: Dict[str, Tuple[float, f
 
     df = df.drop(columns=["_dep_hour_utc"], errors="ignore")
     return df
-
-
 def add_dest_weather_hourly_at_arr(df, airports_meta: Dict[str, Tuple[float, float, str]], cache_dir: str):
     """
     Adds destination hourly weather at *scheduled arrival time* (arr_dt_local).
@@ -728,10 +840,26 @@ def add_dest_weather_hourly_at_arr(df, airports_meta: Dict[str, Tuple[float, flo
     needed = sorted(pd.unique(df["Dest"].astype(str).str.upper()))
     frames = []
 
+    uncached = 0
+    cache_paths = {}
     for ap in needed:
         lat, lon, tz = airports_meta[ap]
-        safe_tz = tz.replace("/", "__")
-        cache_path = cache_dir / f"{ap}_{start}_{end}_{safe_tz}_hourly.parquet"
+        cp = _weather_cache_path(
+            cache_dir,
+            ap,
+            start,
+            end,
+            tz,
+            granularity="hourly",
+            prefix="dest_arr",
+        )
+        cache_paths[ap] = cp
+        if not cp.exists():
+            uncached += 1
+
+    for ap in needed:
+        lat, lon, tz = airports_meta[ap]
+        cache_path = cache_paths[ap]
 
         if cache_path.exists():
             wx = pd.read_parquet(cache_path)
