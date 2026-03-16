@@ -206,7 +206,6 @@ def read_input_parquet(input_flights_path: List[str], cfg: Optional[dict] = None
         end = None
 
     # Keep only columns we actually need for enrichment + history pool
-    # (This cuts memory a LOT. Add columns here if you later find you need more.)
     keep_cols = {
         "FlightDate",
         "Reporting_Airline",
@@ -228,7 +227,6 @@ def read_input_parquet(input_flights_path: List[str], cfg: Optional[dict] = None
         "TaxiIn",
         "DepTimeBlk",
         "Distance",
-        # BTS delay cause breakdown — used to build historical cause-rate features
         "CarrierDelay",
         "WeatherDelay",
         "NASDelay",
@@ -248,11 +246,9 @@ def read_input_parquet(input_flights_path: List[str], cfg: Optional[dict] = None
 
         df = canonicalize_bts_columns(df)
 
-        # Column pruning early
         cols_present = [c for c in df.columns if c in keep_cols]
         df = df[cols_present].copy()
 
-        # Basic normalization for filters
         if "FlightDate" in df.columns:
             df["FlightDate"] = pd.to_datetime(df["FlightDate"], errors="coerce")
         if "Reporting_Airline" in df.columns:
@@ -262,7 +258,6 @@ def read_input_parquet(input_flights_path: List[str], cfg: Optional[dict] = None
         if "Dest" in df.columns:
             df["Dest"] = df["Dest"].astype(str).str.upper().str.strip()
 
-        # Early filters (massive memory savings)
         if start is not None and end is not None and "FlightDate" in df.columns:
             df = df[(df["FlightDate"] >= start) & (df["FlightDate"] <= end)]
 
@@ -285,6 +280,8 @@ def read_input_parquet(input_flights_path: List[str], cfg: Optional[dict] = None
 
     print(f"[INFO] read_rows={read_rows:,} kept_rows={kept_rows:,} after early filtering")
     return pd.concat(out_parts, ignore_index=True)
+
+
 # ------------------------------ airport metadata ------------------------------
 
 def load_airport_meta(airports_csv_path: str) -> pd.DataFrame:
@@ -375,7 +372,6 @@ def add_timezone_local_times(df: pd.DataFrame, airports_meta: Dict[str, Tuple[fl
         dep_dt = _mk_local_dt(getattr(r, "FlightDate"), getattr(r, "CRSDepTime"), getattr(r, "Origin_TZ"))
         arr_dt = _mk_local_dt(getattr(r, "FlightDate"), getattr(r, "CRSArrTime"), getattr(r, "Dest_TZ"))
 
-        # Handle scheduled arrival after midnight relative to scheduled departure
         if dep_dt and arr_dt:
             try:
                 dep_hhmm = getattr(r, "CRSDepTime")
@@ -443,100 +439,16 @@ def _add_arr_dt_local_for_history_pool(
         tz = tz_map.get(str(d0).upper())
         arr_locals.append(_mk_local_dt(fd0, t0, tz) if tz is not None else None)
 
-    # midnight wrap compared to departure isn't available here; best-effort only
     h["arr_dt_local"] = arr_locals
     h["arr_local_date"] = h["arr_dt_local"].apply(lambda x: x.date() if isinstance(x, datetime) else pd.NaT)
     return h
 
 
-# ------------------------------ HTTP helper ------------------------------
-
-def _req_with_backoff(url, params, max_tries: Optional[int] = None):
-    import requests
-
-    if max_tries is None:
-        max_tries = OPEN_METEO_MAX_HTTP_TRIES
-
-    backoff = 2.0
-    delay = 5.0
-    last_status = None
-    last_text = None
-    last_exc = None
-
-    for i in range(1, max_tries + 1):
-        try:
-            _sleep_before_open_meteo_request()
-
-            r = requests.get(url, params=params, timeout=90)
-            last_status = r.status_code
-
-            try:
-                last_text = r.text[:600]
-            except Exception:
-                last_text = ""
-
-            if r.status_code == 200:
-                return r
-
-            # Most important change:
-            # DO NOT keep retrying 429s. Once quota is exceeded, retries only waste cluster time.
-            if r.status_code == 429:
-                raise RuntimeError(
-                    "Open-Meteo returned HTTP 429 (rate/quota exceeded). "
-                    "Stopping immediately to avoid wasting remote compute.\n"
-                    f"Response: {last_text}"
-                )
-
-            if r.status_code in (500, 502, 503, 504):
-                retry_after = None
-                try:
-                    ra = r.headers.get("Retry-After")
-                    if ra is not None:
-                        retry_after = float(ra)
-                except Exception:
-                    retry_after = None
-
-                sleep_s = delay
-                if retry_after is not None and retry_after > sleep_s:
-                    sleep_s = retry_after
-
-                print(f"[WARN] HTTP {r.status_code} attempt {i}/{max_tries}. sleep {sleep_s:.1f}s")
-                time.sleep(sleep_s)
-                delay = min(300, delay * backoff)
-                continue
-
-            raise RuntimeError(f"Request failed HTTP {r.status_code}. Response: {last_text}")
-
-        except RuntimeError:
-            raise
-        except Exception as e:
-            last_exc = e
-            if i == max_tries:
-                break
-            print(f"[WARN] Request exception attempt {i}/{max_tries}: {repr(e)}. sleep {delay:.1f}s")
-            time.sleep(delay + random.uniform(0.25, 1.0))
-            delay = min(300, delay * backoff)
-
-    raise RuntimeError(
-        "Request failed after retries.\n"
-        f"Last status={last_status}, last_response={last_text}, last_exception={repr(last_exc)}"
-    )
-
 # ------------------------------ conservative Open-Meteo request controls ------------------------------
 
-# The goal here is to be deliberately conservative on remote jobs:
-#   - space requests out heavily
-#   - never retry 429s (quota is already exhausted)
-#   - fail early if too many uncached requests would be needed
-#
-# Override via environment variables if needed on the cluster:
-#   OPEN_METEO_MIN_SECONDS_BETWEEN_CALLS=20
-#   OPEN_METEO_MAX_HTTP_TRIES=4
-#   OPEN_METEO_MAX_NEW_REQUESTS_PER_RUN=40
-
-OPEN_METEO_MIN_SECONDS_BETWEEN_CALLS = float(os.getenv("OPEN_METEO_MIN_SECONDS_BETWEEN_CALLS", "20"))
-OPEN_METEO_MAX_HTTP_TRIES = int(os.getenv("OPEN_METEO_MAX_HTTP_TRIES", "4"))
-OPEN_METEO_MAX_NEW_REQUESTS_PER_RUN = int(os.getenv("OPEN_METEO_MAX_NEW_REQUESTS_PER_RUN", "40"))
+OPEN_METEO_MIN_SECONDS_BETWEEN_CALLS = float(os.getenv("OPEN_METEO_MIN_SECONDS_BETWEEN_CALLS", "15"))
+OPEN_METEO_MAX_HTTP_TRIES = int(os.getenv("OPEN_METEO_MAX_HTTP_TRIES", "8"))
+OPEN_METEO_BATCH_SIZE = int(os.getenv("OPEN_METEO_BATCH_SIZE", "25"))
 
 _OPEN_METEO_STATE = {
     "last_request_monotonic": None,
@@ -555,7 +467,6 @@ def _weather_cache_path(
     prefix: str,
 ) -> Path:
     """
-    IMPORTANT:
     Include prefix in filename so origin hourly and dest hourly do not collide
     when they share the same cache directory.
     """
@@ -572,14 +483,118 @@ def _sleep_before_open_meteo_request():
     elapsed = time.monotonic() - last
     min_gap = OPEN_METEO_MIN_SECONDS_BETWEEN_CALLS
     if elapsed < min_gap:
-        # small jitter so repeated jobs do not synchronize
         sleep_s = (min_gap - elapsed) + random.uniform(0.25, 1.0)
         print(f"[INFO] Open-Meteo pacing sleep {sleep_s:.1f}s")
         time.sleep(sleep_s)
 
 
+def _note_open_meteo_request_attempt():
+    _OPEN_METEO_STATE["last_request_monotonic"] = time.monotonic()
+    _OPEN_METEO_STATE["request_attempts_this_run"] += 1
 
 
+def _open_meteo_url():
+    return os.getenv("OPEN_METEO_ARCHIVE_URL", "https://archive-api.open-meteo.com/v1/archive")
+
+
+def _chunks(seq, size):
+    for i in range(0, len(seq), size):
+        yield seq[i:i + size]
+
+
+# ------------------------------ HTTP helper ------------------------------
+
+def _req_with_backoff(url, params, max_tries: Optional[int] = None):
+    import requests
+
+    if max_tries is None:
+        max_tries = OPEN_METEO_MAX_HTTP_TRIES
+
+    backoff = 2.0
+    delay = 15.0
+    last_status = None
+    last_text = None
+    last_exc = None
+
+    for i in range(1, max_tries + 1):
+        try:
+            _sleep_before_open_meteo_request()
+            r = requests.get(url, params=params, timeout=120)
+            _note_open_meteo_request_attempt()
+
+            last_status = r.status_code
+            try:
+                last_text = r.text[:1200]
+            except Exception:
+                last_text = ""
+
+            if r.status_code == 200:
+                return r
+
+            if r.status_code == 429:
+                retry_after = None
+                try:
+                    ra = r.headers.get("Retry-After")
+                    if ra is not None:
+                        retry_after = float(ra)
+                except Exception:
+                    retry_after = None
+
+                # Be especially conservative on 429s.
+                # If provider tells us how long to wait, obey it.
+                # Otherwise start large and grow quickly.
+                sleep_s = retry_after if retry_after is not None else max(60.0, delay)
+
+                print(
+                    f"[WARN] HTTP 429 attempt {i}/{max_tries}. "
+                    f"Backing off for {sleep_s:.1f}s before retry."
+                )
+
+                if i == max_tries:
+                    break
+
+                time.sleep(sleep_s + random.uniform(1.0, 5.0))
+                delay = min(900, sleep_s * backoff)
+                continue
+
+            if r.status_code in (500, 502, 503, 504):
+                retry_after = None
+                try:
+                    ra = r.headers.get("Retry-After")
+                    if ra is not None:
+                        retry_after = float(ra)
+                except Exception:
+                    retry_after = None
+
+                sleep_s = delay
+                if retry_after is not None and retry_after > sleep_s:
+                    sleep_s = retry_after
+
+                print(f"[WARN] HTTP {r.status_code} attempt {i}/{max_tries}. sleep {sleep_s:.1f}s")
+
+                if i == max_tries:
+                    break
+
+                time.sleep(sleep_s + random.uniform(0.5, 1.5))
+                delay = min(300, delay * backoff)
+                continue
+
+            raise RuntimeError(f"Request failed HTTP {r.status_code}. Response: {last_text}")
+
+        except RuntimeError:
+            raise
+        except Exception as e:
+            last_exc = e
+            if i == max_tries:
+                break
+            print(f"[WARN] Request exception attempt {i}/{max_tries}: {repr(e)}. sleep {delay:.1f}s")
+            time.sleep(delay + random.uniform(0.5, 1.5))
+            delay = min(300, delay * backoff)
+
+    raise RuntimeError(
+        "Request failed after retries.\n"
+        f"Last status={last_status}, last_response={last_text}, last_exception={repr(last_exc)}"
+    )
 
 # ------------------------------ weather (daily) ------------------------------
 
@@ -587,14 +602,84 @@ DAILY_WEATHER_VARS = [
     "temperature_2m_max",
     "temperature_2m_min",
     "precipitation_sum",
-    "windspeed_10m_max",
-    "windgusts_10m_max",
-    "weathercode",
+    "wind_speed_10m_max",
+    "wind_gusts_10m_max",
+    "weather_code",
 ]
 
 
+def _fetch_archive_weather_batch(
+    airport_batch: List[str],
+    airports_meta: Dict[str, Tuple[float, float, str]],
+    *,
+    start: str,
+    end: str,
+    hourly_vars: Optional[List[str]] = None,
+    daily_vars: Optional[List[str]] = None,
+) -> Dict[str, dict]:
+    """
+    Fetch multiple airports in one Open-Meteo archive request.
+
+    Open-Meteo archive supports multiple comma-separated coordinates. Multi-location
+    responses are returned as a JSON list ordered like the request.
+    """
+    if not airport_batch:
+        return {}
+
+    url = _open_meteo_url()
+
+    lats = []
+    lons = []
+    tzs = []
+    for ap in airport_batch:
+        lat, lon, tz = airports_meta[ap]
+        lats.append(str(lat))
+        lons.append(str(lon))
+        tzs.append(str(tz))
+
+    params = {
+        "latitude": ",".join(lats),
+        "longitude": ",".join(lons),
+        "start_date": start,
+        "end_date": end,
+        "timezone": ",".join(tzs),
+    }
+    if hourly_vars:
+        params["hourly"] = ",".join(hourly_vars)
+    if daily_vars:
+        params["daily"] = ",".join(daily_vars)
+
+    r = _req_with_backoff(url, params)
+    payload = r.json()
+
+    if isinstance(payload, dict):
+        payloads = [payload]
+    elif isinstance(payload, list):
+        payloads = payload
+    else:
+        raise RuntimeError(f"Unexpected Open-Meteo response type: {type(payload)}")
+
+    if len(payloads) != len(airport_batch):
+        raise RuntimeError(
+            f"Open-Meteo batch response length mismatch: requested={len(airport_batch)} got={len(payloads)}"
+        )
+
+    return {ap: p for ap, p in zip(airport_batch, payloads)}
+
+
+def _daily_df_from_payload(payload: dict) -> pd.DataFrame:
+    daily = payload.get("daily")
+    if not daily or "time" not in daily:
+        cols = ["time"] + DAILY_WEATHER_VARS
+        return pd.DataFrame(columns=cols).assign(FlightDate=pd.to_datetime([])).drop(columns=["time"])
+
+    w = pd.DataFrame(daily)
+    w["FlightDate"] = pd.to_datetime(w["time"])
+    return w.drop(columns=["time"])
+
+
 def _fetch_daily_weather(lat, lon, start, end, tz):
-    url = "https://archive-api.open-meteo.com/v1/archive"
+    url = _open_meteo_url()
     r = _req_with_backoff(
         url,
         {
@@ -606,14 +691,7 @@ def _fetch_daily_weather(lat, lon, start, end, tz):
             "timezone": tz,
         },
     )
-    payload = r.json()
-    daily = payload.get("daily")
-    if not daily or "time" not in daily:
-        cols = ["time"] + DAILY_WEATHER_VARS
-        return pd.DataFrame(columns=cols).assign(FlightDate=pd.to_datetime([])).drop(columns=["time"])
-    w = pd.DataFrame(daily)
-    w["FlightDate"] = pd.to_datetime(w["time"])
-    return w.drop(columns=["time"])
+    return _daily_df_from_payload(r.json())
 
 
 def add_origin_weather_daily(df, airports_meta: Dict[str, Tuple[float, float, str]], cache_dir: str):
@@ -629,35 +707,44 @@ def add_origin_weather_daily(df, airports_meta: Dict[str, Tuple[float, float, st
     needed = sorted(pd.unique(df["Origin"].astype(str).str.upper()))
     frames = []
 
-    uncached = 0
+    missing = []
     cache_paths = {}
     for ap in needed:
         lat, lon, tz = airports_meta[ap]
         cp = _weather_cache_path(cache_dir, ap, start, end, tz, granularity="daily", prefix="origin")
         cache_paths[ap] = cp
-        if not cp.exists():
-            uncached += 1
-
-
-    for ap in needed:
-        lat, lon, tz = airports_meta[ap]
-        cache_path = cache_paths[ap]
-
-        if cache_path.exists():
-            wx = pd.read_parquet(cache_path)
+        if cp.exists():
+            wx = pd.read_parquet(cp)
+            ow = wx.copy()
+            ow["Origin"] = ap
+            ow = ow.rename(columns={c: f"origin_{c}" for c in DAILY_WEATHER_VARS})
+            frames.append(ow[["FlightDate", "Origin"] + [f"origin_{c}" for c in DAILY_WEATHER_VARS]])
         else:
-            wx = _fetch_daily_weather(lat, lon, start, end, tz)
-            wx.to_parquet(cache_path, index=False)
+            missing.append(ap)
 
-        ow = wx.copy()
-        ow["Origin"] = ap
-        ow = ow.rename(columns={c: f"origin_{c}" for c in DAILY_WEATHER_VARS})
-        frames.append(ow[["FlightDate", "Origin"] + [f"origin_{c}" for c in DAILY_WEATHER_VARS]])
+    for batch in _chunks(missing, OPEN_METEO_BATCH_SIZE):
+        print(f"[INFO] Open-Meteo origin daily batch: {len(batch)} airport(s)")
+        payloads = _fetch_archive_weather_batch(
+            batch,
+            airports_meta,
+            start=start,
+            end=end,
+            daily_vars=DAILY_WEATHER_VARS,
+        )
+        for ap in batch:
+            wx = _daily_df_from_payload(payloads[ap])
+            wx.to_parquet(cache_paths[ap], index=False)
+
+            ow = wx.copy()
+            ow["Origin"] = ap
+            ow = ow.rename(columns={c: f"origin_{c}" for c in DAILY_WEATHER_VARS})
+            frames.append(ow[["FlightDate", "Origin"] + [f"origin_{c}" for c in DAILY_WEATHER_VARS]])
 
     if frames:
         o = pd.concat(frames, ignore_index=True)
         df = df.merge(o, on=["FlightDate", "Origin"], how="left")
     return df
+
 
 def add_dest_weather_daily(df, airports_meta: Dict[str, Tuple[float, float, str]], cache_dir: str):
     """
@@ -676,63 +763,60 @@ def add_dest_weather_daily(df, airports_meta: Dict[str, Tuple[float, float, str]
     needed = sorted(pd.unique(df["Dest"].astype(str).str.upper()))
     frames = []
 
-    uncached = 0
+    missing = []
     cache_paths = {}
     for ap in needed:
         lat, lon, tz = airports_meta[ap]
         cp = _weather_cache_path(cache_dir, ap, start, end, tz, granularity="daily", prefix="dest")
         cache_paths[ap] = cp
-        if not cp.exists():
-            uncached += 1
-
-
-    for ap in needed:
-        lat, lon, tz = airports_meta[ap]
-        cache_path = cache_paths[ap]
-
-        if cache_path.exists():
-            wx = pd.read_parquet(cache_path)
+        if cp.exists():
+            wx = pd.read_parquet(cp)
+            dw = wx.copy()
+            dw["Dest"] = ap
+            dw = dw.rename(columns={c: f"dest_{c}" for c in DAILY_WEATHER_VARS})
+            frames.append(dw[["FlightDate", "Dest"] + [f"dest_{c}" for c in DAILY_WEATHER_VARS]])
         else:
-            wx = _fetch_daily_weather(lat, lon, start, end, tz)
-            wx.to_parquet(cache_path, index=False)
+            missing.append(ap)
 
-        dw = wx.copy()
-        dw["Dest"] = ap
-        dw = dw.rename(columns={c: f"dest_{c}" for c in DAILY_WEATHER_VARS})
-        frames.append(dw[["FlightDate", "Dest"] + [f"dest_{c}" for c in DAILY_WEATHER_VARS]])
+    for batch in _chunks(missing, OPEN_METEO_BATCH_SIZE):
+        print(f"[INFO] Open-Meteo dest daily batch: {len(batch)} airport(s)")
+        payloads = _fetch_archive_weather_batch(
+            batch,
+            airports_meta,
+            start=start,
+            end=end,
+            daily_vars=DAILY_WEATHER_VARS,
+        )
+        for ap in batch:
+            wx = _daily_df_from_payload(payloads[ap])
+            wx.to_parquet(cache_paths[ap], index=False)
+
+            dw = wx.copy()
+            dw["Dest"] = ap
+            dw = dw.rename(columns={c: f"dest_{c}" for c in DAILY_WEATHER_VARS})
+            frames.append(dw[["FlightDate", "Dest"] + [f"dest_{c}" for c in DAILY_WEATHER_VARS]])
 
     if frames:
         d = pd.concat(frames, ignore_index=True)
         df = df.merge(d, on=["FlightDate", "Dest"], how="left")
     return df
+
+
 # ------------------------------ weather (hourly at dep time + hourly at arr time) ------------------------------
 
 HOURLY_WEATHER_VARS = [
     "temperature_2m",
     "precipitation",
-    "windspeed_10m",
-    "weathercode",
-    "windgusts_10m",
+    "wind_speed_10m",
+    "weather_code",
+    "wind_gusts_10m",
     "visibility",
     "cape",
-    "cloudcover",
+    "cloud_cover",
 ]
 
 
-def _fetch_hourly_weather(lat, lon, start, end, tz, *, prefix: str):
-    url = "https://archive-api.open-meteo.com/v1/archive"
-    r = _req_with_backoff(
-        url,
-        {
-            "latitude": lat,
-            "longitude": lon,
-            "start_date": start,
-            "end_date": end,
-            "hourly": ",".join(HOURLY_WEATHER_VARS),
-            "timezone": tz,
-        },
-    )
-    payload = r.json()
+def _hourly_df_from_payload(payload: dict, *, tz: str, prefix: str) -> pd.DataFrame:
     hourly = payload.get("hourly")
     if not hourly or "time" not in hourly:
         cols = ["hour_utc"] + [f"{prefix}{v}" for v in HOURLY_WEATHER_VARS]
@@ -750,6 +834,22 @@ def _fetch_hourly_weather(lat, lon, start, end, tz, *, prefix: str):
         out[f"{prefix}{v}"] = pd.to_numeric(h.loc[t_local.index].get(v), errors="coerce")
 
     return out.dropna(subset=["hour_utc"]).drop_duplicates(subset=["hour_utc"]).reset_index(drop=True)
+
+
+def _fetch_hourly_weather(lat, lon, start, end, tz, *, prefix: str):
+    url = _open_meteo_url()
+    r = _req_with_backoff(
+        url,
+        {
+            "latitude": lat,
+            "longitude": lon,
+            "start_date": start,
+            "end_date": end,
+            "hourly": ",".join(HOURLY_WEATHER_VARS),
+            "timezone": tz,
+        },
+    )
+    return _hourly_df_from_payload(r.json(), tz=tz, prefix=prefix)
 
 
 def add_origin_weather_hourly_at_dep(df, airports_meta: Dict[str, Tuple[float, float, str]], cache_dir: str):
@@ -770,7 +870,7 @@ def add_origin_weather_hourly_at_dep(df, airports_meta: Dict[str, Tuple[float, f
     needed = sorted(pd.unique(df["Origin"].astype(str).str.upper()))
     frames = []
 
-    uncached = 0
+    missing = []
     cache_paths = {}
     for ap in needed:
         lat, lon, tz = airports_meta[ap]
@@ -784,27 +884,28 @@ def add_origin_weather_hourly_at_dep(df, airports_meta: Dict[str, Tuple[float, f
             prefix="origin_dep",
         )
         cache_paths[ap] = cp
-        if not cp.exists():
-            uncached += 1
-
-
-    for ap in needed:
-        lat, lon, tz = airports_meta[ap]
-        cache_path = cache_paths[ap]
-
-        if cache_path.exists():
-            wx = pd.read_parquet(cache_path)
+        if cp.exists():
+            wx = pd.read_parquet(cp)
+            wx["Origin"] = ap
+            frames.append(wx)
         else:
-            wx = _fetch_hourly_weather(lat, lon, start, end, tz, prefix="origin_dep_")
-            if wx is not None and not wx.empty and "hour_utc" in wx.columns:
-                wx.to_parquet(cache_path, index=False)
+            missing.append(ap)
 
-        if wx is None or wx.empty:
-            continue
-
-        ow = wx.copy()
-        ow["Origin"] = ap
-        frames.append(ow)
+    for batch in _chunks(missing, OPEN_METEO_BATCH_SIZE):
+        print(f"[INFO] Open-Meteo origin hourly batch: {len(batch)} airport(s)")
+        payloads = _fetch_archive_weather_batch(
+            batch,
+            airports_meta,
+            start=start,
+            end=end,
+            hourly_vars=HOURLY_WEATHER_VARS,
+        )
+        for ap in batch:
+            tz = airports_meta[ap][2]
+            wx = _hourly_df_from_payload(payloads[ap], tz=tz, prefix="origin_dep_")
+            wx.to_parquet(cache_paths[ap], index=False)
+            wx["Origin"] = ap
+            frames.append(wx)
 
     if frames:
         h = pd.concat(frames, ignore_index=True)
@@ -818,6 +919,8 @@ def add_origin_weather_hourly_at_dep(df, airports_meta: Dict[str, Tuple[float, f
 
     df = df.drop(columns=["_dep_hour_utc"], errors="ignore")
     return df
+
+
 def add_dest_weather_hourly_at_arr(df, airports_meta: Dict[str, Tuple[float, float, str]], cache_dir: str):
     """
     Adds destination hourly weather at *scheduled arrival time* (arr_dt_local).
@@ -840,7 +943,7 @@ def add_dest_weather_hourly_at_arr(df, airports_meta: Dict[str, Tuple[float, flo
     needed = sorted(pd.unique(df["Dest"].astype(str).str.upper()))
     frames = []
 
-    uncached = 0
+    missing = []
     cache_paths = {}
     for ap in needed:
         lat, lon, tz = airports_meta[ap]
@@ -854,26 +957,28 @@ def add_dest_weather_hourly_at_arr(df, airports_meta: Dict[str, Tuple[float, flo
             prefix="dest_arr",
         )
         cache_paths[ap] = cp
-        if not cp.exists():
-            uncached += 1
-
-    for ap in needed:
-        lat, lon, tz = airports_meta[ap]
-        cache_path = cache_paths[ap]
-
-        if cache_path.exists():
-            wx = pd.read_parquet(cache_path)
+        if cp.exists():
+            wx = pd.read_parquet(cp)
+            wx["Dest"] = ap
+            frames.append(wx)
         else:
-            wx = _fetch_hourly_weather(lat, lon, start, end, tz, prefix="dest_arr_")
-            if wx is not None and not wx.empty and "hour_utc" in wx.columns:
-                wx.to_parquet(cache_path, index=False)
+            missing.append(ap)
 
-        if wx is None or wx.empty:
-            continue
-
-        dw = wx.copy()
-        dw["Dest"] = ap
-        frames.append(dw)
+    for batch in _chunks(missing, OPEN_METEO_BATCH_SIZE):
+        print(f"[INFO] Open-Meteo dest hourly batch: {len(batch)} airport(s)")
+        payloads = _fetch_archive_weather_batch(
+            batch,
+            airports_meta,
+            start=start,
+            end=end,
+            hourly_vars=HOURLY_WEATHER_VARS,
+        )
+        for ap in batch:
+            tz = airports_meta[ap][2]
+            wx = _hourly_df_from_payload(payloads[ap], tz=tz, prefix="dest_arr_")
+            wx.to_parquet(cache_paths[ap], index=False)
+            wx["Dest"] = ap
+            frames.append(wx)
 
     if frames:
         h = pd.concat(frames, ignore_index=True)
@@ -1104,20 +1209,12 @@ def build_and_write_history_pool(cfg: dict) -> Optional[Path]:
     lookback_days = int(cfg.get("history_lookback_days", 60))
 
     airports = _load_airport_filter_set(cfg)
-    # Strip start_date / end_date so the full lookback range loads without being
-    # clipped by the training window.  The explicit date filter below re-applies
-    # the correct history window (start_date - lookback_days  ..  end_date).
-    # Also strip airline filters: congestion and hub-spillover features are
-    # network-wide signals that should reflect all carriers operating at an
-    # airport, not just the target airline.  Route-level rolling features in
-    # features_dep.py self-filter via Reporting_Airline in their groupby keys.
     _hist_cfg = {k: v for k, v in cfg.items()
                  if k not in ("start_date", "end_date", "airlines", "single_airline")}
     hist = read_input_parquet(hist_paths, cfg=_hist_cfg, airports_set=airports)
     hist = canonicalize_bts_columns(hist)
     hist["FlightDate"] = pd.to_datetime(hist["FlightDate"], errors="coerce")
 
-    # numeric normalization
     for c in [
         "CRSDepTime",
         "CRSArrTime",
@@ -1131,7 +1228,6 @@ def build_and_write_history_pool(cfg: dict) -> Optional[Path]:
         "WheelsOn",
         "TaxiOut",
         "TaxiIn",
-        # cause breakdown — keep as numeric for cause-rate feature engineering
         "CarrierDelay",
         "WeatherDelay",
         "NASDelay",
@@ -1147,7 +1243,6 @@ def build_and_write_history_pool(cfg: dict) -> Optional[Path]:
         hist["Dest"] = hist["Dest"].astype(str).str.upper()
         hist = hist[hist["Origin"].isin(airports) & hist["Dest"].isin(airports)]
 
-    # date-window
     if cfg.get("start_date") and cfg.get("end_date"):
         s = _parse_date_strict(cfg["start_date"], "start_date") - pd.Timedelta(days=lookback_days)
         e = _parse_date_strict(cfg["end_date"], "end_date")
@@ -1162,7 +1257,6 @@ def build_and_write_history_pool(cfg: dict) -> Optional[Path]:
     airports_csv_resolved = _abspath(airports_csv, base="repo")
     meta_df = load_airport_meta(airports_csv)
 
-    # IMPORTANT: history pool needs tz for both origins and dests if we compute arr_dt_local too
     needed_iata = sorted(pd.unique(pd.concat([hist["Origin"], hist["Dest"]]).astype(str).str.upper()))
     airports_meta = _validate_tz_strings_for_needed(
         meta_df,
@@ -1193,7 +1287,6 @@ def build_and_write_history_pool(cfg: dict) -> Optional[Path]:
         "WheelsOn",
         "TaxiOut",
         "TaxiIn",
-        # cause breakdown for rolling cause-rate features
         "CarrierDelay",
         "WeatherDelay",
         "NASDelay",
@@ -1275,22 +1368,18 @@ def main():
 
     weather_cfg = cfg.get("weather") or {}
 
-    # origin daily
     if bool(weather_cfg.get("daily", True)):
         cache_dir = weather_cfg.get("cache_dir", "weather_cache")
         df = add_origin_weather_daily(df, airports_meta=airports_meta, cache_dir=cache_dir)
 
-        # dest daily
         if bool(weather_cfg.get("dest_daily", True)):
             dest_cache_dir = weather_cfg.get("dest_cache_dir", cache_dir)
             df = add_dest_weather_daily(df, airports_meta=airports_meta, cache_dir=dest_cache_dir)
 
-    # origin hourly @ dep
     if bool(weather_cfg.get("hourly_at_dep", True)):
         hourly_cache_dir = weather_cfg.get("hourly_cache_dir", "weather_cache_hourly")
         df = add_origin_weather_hourly_at_dep(df, airports_meta=airports_meta, cache_dir=hourly_cache_dir)
 
-        # dest hourly @ scheduled arr
         if bool(weather_cfg.get("dest_hourly_at_arr", True)):
             dest_hourly_cache_dir = weather_cfg.get("dest_hourly_cache_dir", hourly_cache_dir)
             df = add_dest_weather_hourly_at_arr(df, airports_meta=airports_meta, cache_dir=dest_hourly_cache_dir)

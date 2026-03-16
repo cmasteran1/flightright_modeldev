@@ -17,6 +17,7 @@
   ],
 
   "airports_csv": "../flightrightdata/data/meta/airports.csv",
+  "airports_filter_csv": "../flightrightdata/data/meta/airport_rankings/WN_top_100.csv",
   "airlines": ["WN"],
   "start_date": "2023-01-01",
   "end_date":   "2023-12-31",
