@@ -595,16 +595,48 @@ def _req_with_backoff(url, params, max_tries: Optional[int] = None):
         "Request failed after retries.\n"
         f"Last status={last_status}, last_response={last_text}, last_exception={repr(last_exc)}"
     )
+def _normalize_weather_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Normalize Open-Meteo/cached column names back to this script's long-standing schema.
 
+    Do NOT change downstream variable names; map any alternate spellings back to:
+      - windspeed_10m / windspeed_10m_max
+      - windgusts_10m / windgusts_10m_max
+      - weathercode
+      - cloudcover
+    """
+    if df is None or df.empty:
+        return df
+
+    out = df.copy()
+    rename_map = {}
+
+    aliases = {
+        "wind_speed_10m": "windspeed_10m",
+        "wind_gusts_10m": "windgusts_10m",
+        "weather_code": "weathercode",
+        "cloud_cover": "cloudcover",
+        "wind_speed_10m_max": "windspeed_10m_max",
+        "wind_gusts_10m_max": "windgusts_10m_max",
+    }
+
+    for src, dst in aliases.items():
+        if src in out.columns and dst not in out.columns:
+            rename_map[src] = dst
+
+    if rename_map:
+        out = out.rename(columns=rename_map)
+
+    return out
 # ------------------------------ weather (daily) ------------------------------
 
 DAILY_WEATHER_VARS = [
     "temperature_2m_max",
     "temperature_2m_min",
     "precipitation_sum",
-    "wind_speed_10m_max",
-    "wind_gusts_10m_max",
-    "weather_code",
+    "windspeed_10m_max",
+    "windgusts_10m_max",
+    "weathercode",
 ]
 
 
@@ -674,6 +706,7 @@ def _daily_df_from_payload(payload: dict) -> pd.DataFrame:
         return pd.DataFrame(columns=cols).assign(FlightDate=pd.to_datetime([])).drop(columns=["time"])
 
     w = pd.DataFrame(daily)
+    w = _normalize_weather_columns(w)
     w["FlightDate"] = pd.to_datetime(w["time"])
     return w.drop(columns=["time"])
 
@@ -715,6 +748,7 @@ def add_origin_weather_daily(df, airports_meta: Dict[str, Tuple[float, float, st
         cache_paths[ap] = cp
         if cp.exists():
             wx = pd.read_parquet(cp)
+            wx = _normalize_weather_columns(wx)
             ow = wx.copy()
             ow["Origin"] = ap
             ow = ow.rename(columns={c: f"origin_{c}" for c in DAILY_WEATHER_VARS})
@@ -771,6 +805,7 @@ def add_dest_weather_daily(df, airports_meta: Dict[str, Tuple[float, float, str]
         cache_paths[ap] = cp
         if cp.exists():
             wx = pd.read_parquet(cp)
+            wx = _normalize_weather_columns(wx)
             dw = wx.copy()
             dw["Dest"] = ap
             dw = dw.rename(columns={c: f"dest_{c}" for c in DAILY_WEATHER_VARS})
@@ -807,12 +842,12 @@ def add_dest_weather_daily(df, airports_meta: Dict[str, Tuple[float, float, str]
 HOURLY_WEATHER_VARS = [
     "temperature_2m",
     "precipitation",
-    "wind_speed_10m",
-    "weather_code",
-    "wind_gusts_10m",
+    "windspeed_10m",
+    "weathercode",
+    "windgusts_10m",
     "visibility",
     "cape",
-    "cloud_cover",
+    "cloudcover",
 ]
 
 
@@ -823,6 +858,8 @@ def _hourly_df_from_payload(payload: dict, *, tz: str, prefix: str) -> pd.DataFr
         return pd.DataFrame(columns=cols)
 
     h = pd.DataFrame(hourly)
+    h = _normalize_weather_columns(h)
+
     t_local = pd.to_datetime(h["time"], errors="coerce")
     t_local = t_local.dt.tz_localize(tz, ambiguous="NaT", nonexistent="shift_forward")
     t_local = t_local.dropna()
@@ -834,7 +871,6 @@ def _hourly_df_from_payload(payload: dict, *, tz: str, prefix: str) -> pd.DataFr
         out[f"{prefix}{v}"] = pd.to_numeric(h.loc[t_local.index].get(v), errors="coerce")
 
     return out.dropna(subset=["hour_utc"]).drop_duplicates(subset=["hour_utc"]).reset_index(drop=True)
-
 
 def _fetch_hourly_weather(lat, lon, start, end, tz, *, prefix: str):
     url = _open_meteo_url()
@@ -886,6 +922,7 @@ def add_origin_weather_hourly_at_dep(df, airports_meta: Dict[str, Tuple[float, f
         cache_paths[ap] = cp
         if cp.exists():
             wx = pd.read_parquet(cp)
+            wx = _normalize_weather_columns(wx)
             wx["Origin"] = ap
             frames.append(wx)
         else:
@@ -959,6 +996,7 @@ def add_dest_weather_hourly_at_arr(df, airports_meta: Dict[str, Tuple[float, flo
         cache_paths[ap] = cp
         if cp.exists():
             wx = pd.read_parquet(cp)
+            wx = _normalize_weather_columns(wx)
             wx["Dest"] = ap
             frames.append(wx)
         else:
