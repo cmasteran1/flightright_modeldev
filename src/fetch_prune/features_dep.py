@@ -699,6 +699,7 @@ def add_carrier_dep_delay_baselines_from_history_multi(
         carr_daily[f"carrier_depdelay_std_last{w}"] = (
             grp.apply(lambda s: s.shift(1).rolling(window=int(w), min_periods=min(2, int(w))).std())
             .reset_index(level=0, drop=True)
+            .fillna(0.0)  # std of single observation = 0 (no variability)
         )
 
     mean_cols = [f"carrier_depdelay_mean_last{w}" for w in windows]
@@ -724,6 +725,7 @@ def add_carrier_dep_delay_baselines_from_history_multi(
             grp_co
             .apply(lambda s: s.shift(1).rolling(window=int(w), min_periods=min(2, int(w))).std())
             .reset_index(level=[0, 1], drop=True)
+            .fillna(0.0)  # std of single observation = 0
         )
 
     mean_cols_co = [f"carrier_origin_depdelay_mean_last{w}" for w in windows]
@@ -770,6 +772,7 @@ def add_origin_dep_delay_baselines_from_history_multi(
             grp_o
             .apply(lambda s: s.shift(1).rolling(window=int(w), min_periods=min(2, int(w))).std())
             .reset_index(level=0, drop=True)
+            .fillna(0.0)  # std of single observation = 0
         )
 
     mean_cols_o = [f"origin_depdelay_mean_last{w}" for w in windows]

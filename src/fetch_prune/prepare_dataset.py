@@ -497,6 +497,13 @@ def _open_meteo_url():
     return os.getenv("OPEN_METEO_ARCHIVE_URL", "https://archive-api.open-meteo.com/v1/archive")
 
 
+def _open_meteo_historical_forecast_url():
+    return os.getenv(
+        "OPEN_METEO_HISTORICAL_FORECAST_URL",
+        "https://historical-forecast-api.open-meteo.com/v1/forecast",
+    )
+
+
 def _chunks(seq, size):
     for i in range(0, len(seq), size):
         yield seq[i:i + size]
@@ -699,6 +706,60 @@ def _fetch_archive_weather_batch(
     return {ap: p for ap, p in zip(airport_batch, payloads)}
 
 
+def _fetch_historical_forecast_batch(
+    airport_batch: List[str],
+    airports_meta: Dict[str, Tuple[float, float, str]],
+    *,
+    start: str,
+    end: str,
+    hourly_vars: List[str],
+) -> Dict[str, dict]:
+    """
+    Fetch from the historical-forecast API for variables not in ERA5 archive
+    (visibility, cape). Same multi-location pattern as _fetch_archive_weather_batch.
+    """
+    if not airport_batch or not hourly_vars:
+        return {}
+
+    url = _open_meteo_historical_forecast_url()
+
+    lats = []
+    lons = []
+    tzs = []
+    for ap in airport_batch:
+        lat, lon, tz = airports_meta[ap]
+        lats.append(str(lat))
+        lons.append(str(lon))
+        tzs.append(str(tz))
+
+    params = {
+        "latitude": ",".join(lats),
+        "longitude": ",".join(lons),
+        "start_date": start,
+        "end_date": end,
+        "timezone": ",".join(tzs),
+        "hourly": ",".join(hourly_vars),
+    }
+
+    r = _req_with_backoff(url, params)
+    payload = r.json()
+
+    if isinstance(payload, dict):
+        payloads = [payload]
+    elif isinstance(payload, list):
+        payloads = payload
+    else:
+        raise RuntimeError(f"Unexpected historical-forecast response type: {type(payload)}")
+
+    if len(payloads) != len(airport_batch):
+        raise RuntimeError(
+            f"Historical-forecast batch response length mismatch: "
+            f"requested={len(airport_batch)} got={len(payloads)}"
+        )
+
+    return {ap: p for ap, p in zip(airport_batch, payloads)}
+
+
 def _daily_df_from_payload(payload: dict) -> pd.DataFrame:
     daily = payload.get("daily")
     if not daily or "time" not in daily:
@@ -839,16 +900,24 @@ def add_dest_weather_daily(df, airports_meta: Dict[str, Tuple[float, float, str]
 
 # ------------------------------ weather (hourly at dep time + hourly at arr time) ------------------------------
 
-HOURLY_WEATHER_VARS = [
+# Variables available from the archive API (ERA5 reanalysis)
+_HOURLY_ARCHIVE_VARS = [
     "temperature_2m",
     "precipitation",
     "windspeed_10m",
     "weathercode",
     "windgusts_10m",
-    "visibility",
-    "cape",
     "cloudcover",
 ]
+
+# Variables only available from the historical-forecast API (not in ERA5 archive)
+_HOURLY_FORECAST_ONLY_VARS = [
+    "visibility",
+    "cape",
+]
+
+# Union: used for column scaffolding and cache schema
+HOURLY_WEATHER_VARS = _HOURLY_ARCHIVE_VARS + _HOURLY_FORECAST_ONLY_VARS
 
 
 def _hourly_df_from_payload(payload: dict, *, tz: str, prefix: str) -> pd.DataFrame:
@@ -873,6 +942,7 @@ def _hourly_df_from_payload(payload: dict, *, tz: str, prefix: str) -> pd.DataFr
     return out.dropna(subset=["hour_utc"]).drop_duplicates(subset=["hour_utc"]).reset_index(drop=True)
 
 def _fetch_hourly_weather(lat, lon, start, end, tz, *, prefix: str):
+    # Fetch archive vars (temp, precip, wind, etc.)
     url = _open_meteo_url()
     r = _req_with_backoff(
         url,
@@ -881,11 +951,45 @@ def _fetch_hourly_weather(lat, lon, start, end, tz, *, prefix: str):
             "longitude": lon,
             "start_date": start,
             "end_date": end,
-            "hourly": ",".join(HOURLY_WEATHER_VARS),
+            "hourly": ",".join(_HOURLY_ARCHIVE_VARS),
             "timezone": tz,
         },
     )
-    return _hourly_df_from_payload(r.json(), tz=tz, prefix=prefix)
+    wx = _hourly_df_from_payload(r.json(), tz=tz, prefix=prefix)
+    # Drop forecast-only cols from archive result (they'll be all-null)
+    fc_col_names = [f"{prefix}{v}" for v in _HOURLY_FORECAST_ONLY_VARS]
+    wx = wx.drop(columns=[c for c in fc_col_names if c in wx.columns], errors="ignore")
+
+    # Supplement with forecast-only vars (visibility, cape)
+    if _HOURLY_FORECAST_ONLY_VARS:
+        try:
+            fc_url = _open_meteo_historical_forecast_url()
+            r_fc = _req_with_backoff(
+                fc_url,
+                {
+                    "latitude": lat,
+                    "longitude": lon,
+                    "start_date": start,
+                    "end_date": end,
+                    "hourly": ",".join(_HOURLY_FORECAST_ONLY_VARS),
+                    "timezone": tz,
+                },
+            )
+            wx_fc = _hourly_df_from_payload(r_fc.json(), tz=tz, prefix=prefix)
+            fc_cols = ["hour_utc"] + [f"{prefix}{v}" for v in _HOURLY_FORECAST_ONLY_VARS]
+            fc_keep = [c for c in fc_cols if c in wx_fc.columns]
+            if len(fc_keep) > 1:
+                wx = wx.merge(wx_fc[fc_keep], on="hour_utc", how="left")
+        except Exception as e:
+            print(f"[WARN] historical-forecast fetch failed for visibility/cape: {e}")
+
+    # Ensure all expected columns exist
+    for v in HOURLY_WEATHER_VARS:
+        col = f"{prefix}{v}"
+        if col not in wx.columns:
+            wx[col] = np.nan
+
+    return wx
 
 
 def add_origin_weather_hourly_at_dep(df, airports_meta: Dict[str, Tuple[float, float, str]], cache_dir: str):
@@ -930,16 +1034,47 @@ def add_origin_weather_hourly_at_dep(df, airports_meta: Dict[str, Tuple[float, f
 
     for batch in _chunks(missing, OPEN_METEO_BATCH_SIZE):
         print(f"[INFO] Open-Meteo origin hourly batch: {len(batch)} airport(s)")
-        payloads = _fetch_archive_weather_batch(
+        # 1) Fetch archive vars (temp, precip, wind, weathercode, cloudcover)
+        archive_payloads = _fetch_archive_weather_batch(
             batch,
             airports_meta,
             start=start,
             end=end,
-            hourly_vars=HOURLY_WEATHER_VARS,
+            hourly_vars=_HOURLY_ARCHIVE_VARS,
         )
+        # 2) Fetch forecast-only vars (visibility, cape) from historical-forecast API
+        forecast_payloads = {}
+        if _HOURLY_FORECAST_ONLY_VARS:
+            print(f"[INFO] Open-Meteo historical-forecast hourly (visibility, cape): {len(batch)} airport(s)")
+            try:
+                forecast_payloads = _fetch_historical_forecast_batch(
+                    batch,
+                    airports_meta,
+                    start=start,
+                    end=end,
+                    hourly_vars=_HOURLY_FORECAST_ONLY_VARS,
+                )
+            except Exception as e:
+                print(f"[WARN] historical-forecast fetch failed, visibility/cape will be null: {e}")
+        # 3) Merge archive + forecast payloads per airport
         for ap in batch:
             tz = airports_meta[ap][2]
-            wx = _hourly_df_from_payload(payloads[ap], tz=tz, prefix="origin_dep_")
+            wx = _hourly_df_from_payload(archive_payloads[ap], tz=tz, prefix="origin_dep_")
+            # Drop forecast-only cols from archive result (they'll be all-null)
+            fc_drop = [f"origin_dep_{v}" for v in _HOURLY_FORECAST_ONLY_VARS]
+            wx = wx.drop(columns=[c for c in fc_drop if c in wx.columns], errors="ignore")
+            if ap in forecast_payloads:
+                wx_fc = _hourly_df_from_payload(forecast_payloads[ap], tz=tz, prefix="origin_dep_")
+                # Merge forecast-only columns into archive frame on hour_utc
+                fc_cols = ["hour_utc"] + [f"origin_dep_{v}" for v in _HOURLY_FORECAST_ONLY_VARS]
+                fc_keep = [c for c in fc_cols if c in wx_fc.columns]
+                if len(fc_keep) > 1:
+                    wx = wx.merge(wx_fc[fc_keep], on="hour_utc", how="left")
+            # Ensure all expected columns exist (even if null)
+            for v in HOURLY_WEATHER_VARS:
+                col = f"origin_dep_{v}"
+                if col not in wx.columns:
+                    wx[col] = np.nan
             wx.to_parquet(cache_paths[ap], index=False)
             wx["Origin"] = ap
             frames.append(wx)
@@ -1004,16 +1139,41 @@ def add_dest_weather_hourly_at_arr(df, airports_meta: Dict[str, Tuple[float, flo
 
     for batch in _chunks(missing, OPEN_METEO_BATCH_SIZE):
         print(f"[INFO] Open-Meteo dest hourly batch: {len(batch)} airport(s)")
-        payloads = _fetch_archive_weather_batch(
+        archive_payloads = _fetch_archive_weather_batch(
             batch,
             airports_meta,
             start=start,
             end=end,
-            hourly_vars=HOURLY_WEATHER_VARS,
+            hourly_vars=_HOURLY_ARCHIVE_VARS,
         )
+        forecast_payloads = {}
+        if _HOURLY_FORECAST_ONLY_VARS:
+            print(f"[INFO] Open-Meteo historical-forecast dest hourly (visibility, cape): {len(batch)} airport(s)")
+            try:
+                forecast_payloads = _fetch_historical_forecast_batch(
+                    batch,
+                    airports_meta,
+                    start=start,
+                    end=end,
+                    hourly_vars=_HOURLY_FORECAST_ONLY_VARS,
+                )
+            except Exception as e:
+                print(f"[WARN] historical-forecast dest fetch failed, visibility/cape will be null: {e}")
         for ap in batch:
             tz = airports_meta[ap][2]
-            wx = _hourly_df_from_payload(payloads[ap], tz=tz, prefix="dest_arr_")
+            wx = _hourly_df_from_payload(archive_payloads[ap], tz=tz, prefix="dest_arr_")
+            fc_drop = [f"dest_arr_{v}" for v in _HOURLY_FORECAST_ONLY_VARS]
+            wx = wx.drop(columns=[c for c in fc_drop if c in wx.columns], errors="ignore")
+            if ap in forecast_payloads:
+                wx_fc = _hourly_df_from_payload(forecast_payloads[ap], tz=tz, prefix="dest_arr_")
+                fc_cols = ["hour_utc"] + [f"dest_arr_{v}" for v in _HOURLY_FORECAST_ONLY_VARS]
+                fc_keep = [c for c in fc_cols if c in wx_fc.columns]
+                if len(fc_keep) > 1:
+                    wx = wx.merge(wx_fc[fc_keep], on="hour_utc", how="left")
+            for v in HOURLY_WEATHER_VARS:
+                col = f"dest_arr_{v}"
+                if col not in wx.columns:
+                    wx[col] = np.nan
             wx.to_parquet(cache_paths[ap], index=False)
             wx["Dest"] = ap
             frames.append(wx)
