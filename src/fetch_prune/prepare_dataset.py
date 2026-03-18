@@ -446,7 +446,18 @@ def _add_arr_dt_local_for_history_pool(
 
 # ------------------------------ conservative Open-Meteo request controls ------------------------------
 
-OPEN_METEO_MIN_SECONDS_BETWEEN_CALLS = float(os.getenv("OPEN_METEO_MIN_SECONDS_BETWEEN_CALLS", "15"))
+# API key for paid Open-Meteo tier (set env var OPEN_METEO_API_KEY).
+# When set, uses customer-api.open-meteo.com and relaxes pacing.
+# API key for paid Open-Meteo tier (set env var OPEN_METEO_API_KEY).
+# Note: archive and historical-forecast endpoints work on the free tier
+# without a key. The key is only needed for higher rate limits on the
+# forecast endpoint (used at inference time, not during training).
+# We keep the key support here for future use but default pacing is
+# conservative to avoid 429s on the free archive tier.
+OPEN_METEO_API_KEY = os.getenv("OPEN_METEO_API_KEY", "").strip()
+
+_DEFAULT_PACING = "2" if OPEN_METEO_API_KEY else "15"
+OPEN_METEO_MIN_SECONDS_BETWEEN_CALLS = float(os.getenv("OPEN_METEO_MIN_SECONDS_BETWEEN_CALLS", _DEFAULT_PACING))
 OPEN_METEO_MAX_HTTP_TRIES = int(os.getenv("OPEN_METEO_MAX_HTTP_TRIES", "8"))
 OPEN_METEO_BATCH_SIZE = int(os.getenv("OPEN_METEO_BATCH_SIZE", "25"))
 
@@ -504,6 +515,13 @@ def _open_meteo_historical_forecast_url():
     )
 
 
+def _open_meteo_api_params() -> dict:
+    """Return empty dict — archive/historical-forecast endpoints are free tier.
+    API key causes 403 on these endpoints unless on Professional/Enterprise plan.
+    Key support kept for future forecast-endpoint use at inference time."""
+    return {}
+
+
 def _chunks(seq, size):
     for i in range(0, len(seq), size):
         yield seq[i:i + size]
@@ -513,6 +531,9 @@ def _chunks(seq, size):
 
 def _req_with_backoff(url, params, max_tries: Optional[int] = None):
     import requests
+
+    # Inject API key into all Open-Meteo requests
+    params = {**params, **_open_meteo_api_params()}
 
     if max_tries is None:
         max_tries = OPEN_METEO_MAX_HTTP_TRIES
