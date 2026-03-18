@@ -77,7 +77,6 @@ def _last_weekday_of_month(year: int, month: int, weekday: int) -> date:
     import calendar as _cal
     last_day_num = _cal.monthrange(year, month)[1]
     d = date(year, month, last_day_num)
-    # weekday() returns 0=Mon…6=Sun; shift backward to reach desired weekday
     shift = (d.weekday() - weekday) % 7
     return d - timedelta(days=shift)
 
@@ -87,20 +86,20 @@ def _us_travel_holidays(year: int) -> List[Tuple[date, int]]:
     Returns list of (holiday_date, window_days) for travel-impactful US holidays.
     Window = how many days ± around the anchor date to flag as 'holiday'.
     """
-    mlk_day       = _nth_weekday_of_month(year, 1, weekday=0, n=3)  # 3rd Mon Jan
-    presidents_day = _nth_weekday_of_month(year, 2, weekday=0, n=3) # 3rd Mon Feb
-    memorial_day  = _last_weekday_of_month(year, 5, weekday=0)       # Last Mon May
-    labor_day     = _nth_weekday_of_month(year, 9, weekday=0, n=1)   # 1st Mon Sep
+    mlk_day       = _nth_weekday_of_month(year, 1, weekday=0, n=3)
+    presidents_day = _nth_weekday_of_month(year, 2, weekday=0, n=3)
+    memorial_day  = _last_weekday_of_month(year, 5, weekday=0)
+    labor_day     = _nth_weekday_of_month(year, 9, weekday=0, n=1)
 
     return [
-        (date(year, 1, 1),        1),   # New Year's Day
-        (mlk_day,                 1),   # MLK Day (Mon holiday, light travel)
-        (presidents_day,          1),   # Presidents' Day
-        (memorial_day,            2),   # Memorial Day weekend (big travel)
-        (date(year, 7, 4),        2),   # Independence Day
-        (labor_day,               2),   # Labor Day weekend (big travel)
-        (thanksgiving_day(year),  2),   # Thanksgiving
-        (date(year, 12, 25),      3),   # Christmas
+        (date(year, 1, 1),        1),
+        (mlk_day,                 1),
+        (presidents_day,          1),
+        (memorial_day,            2),
+        (date(year, 7, 4),        2),
+        (labor_day,               2),
+        (thanksgiving_day(year),  2),
+        (date(year, 12, 25),      3),
     ]
 
 
@@ -120,18 +119,15 @@ def add_holiday_flag(
     base = pd.to_datetime(df["FlightDate"], errors="coerce")
     years = sorted(pd.unique(base.dt.year.dropna()))
 
-    # Build per-year set of (date, window) pairs
     holiday_map: Dict[int, List[Tuple[date, int]]] = {}
     for y in years:
         iy = int(y)
-        # Override thanksgiving/christmas windows from config
         hols = _us_travel_holidays(iy)
-        # Apply config overrides for thanksgiving/christmas
         hols_out = []
         for h_date, h_win in hols:
-            if h_date.month == 11:  # thanksgiving
+            if h_date.month == 11:
                 hols_out.append((h_date, thanksgiving_window))
-            elif h_date.month == 12 and h_date.day == 25:  # christmas
+            elif h_date.month == 12 and h_date.day == 25:
                 hols_out.append((h_date, christmas_window))
             else:
                 hols_out.append((h_date, h_win))
@@ -140,8 +136,7 @@ def add_holiday_flag(
     def is_near(d0: date, center: date, win: int) -> bool:
         return abs((d0 - center).days) <= win
 
-    # Spring break: March 15 - April 15 (proxy for US spring break travel peak)
-    sb_start = spring_break_window[0]  # (month, day)
+    sb_start = spring_break_window[0]
     sb_end   = spring_break_window[1]
 
     flags = []
@@ -160,7 +155,6 @@ def add_holiday_flag(
                 f = 1
                 break
         flags.append(f)
-        # Spring break flag
         try:
             sb_s = date(y, sb_start[0], sb_start[1])
             sb_e = date(y, sb_end[0],   sb_end[1])
@@ -177,7 +171,6 @@ def add_holiday_flag(
 def add_weather_kelvin(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
-    # --- Daily origin weather ---
     if "origin_temperature_2m_max" in df.columns:
         df["origin_temp_max_K"] = pd.to_numeric(df["origin_temperature_2m_max"], errors="coerce") + 273.15
     if "origin_temperature_2m_min" in df.columns:
@@ -186,26 +179,21 @@ def add_weather_kelvin(df: pd.DataFrame) -> pd.DataFrame:
         df["origin_daily_precip_sum_mm"] = pd.to_numeric(df["origin_precipitation_sum"], errors="coerce")
     if "origin_windspeed_10m_max" in df.columns:
         df["origin_daily_windspeed_max_kmh"] = pd.to_numeric(df["origin_windspeed_10m_max"], errors="coerce")
-    # Daily windgusts (already km/h from Open-Meteo)
     if "origin_windgusts_10m_max" in df.columns:
         df["origin_daily_windgusts_max_kmh"] = pd.to_numeric(df["origin_windgusts_10m_max"], errors="coerce")
 
-    # --- Hourly origin weather at departure time ---
     if "origin_dep_temperature_2m" in df.columns:
         df["origin_dep_temp_K"] = pd.to_numeric(df["origin_dep_temperature_2m"], errors="coerce") + 273.15
     if "origin_dep_precipitation" in df.columns:
         df["origin_dep_precip_mm"] = pd.to_numeric(df["origin_dep_precipitation"], errors="coerce")
     if "origin_dep_windspeed_10m" in df.columns:
         df["origin_dep_windspeed_kmh"] = pd.to_numeric(df["origin_dep_windspeed_10m"], errors="coerce")
-    # Extended hourly: windgusts, visibility, CAPE, cloudcover
     if "origin_dep_windgusts_10m" in df.columns:
         df["origin_dep_windgusts_kmh"] = pd.to_numeric(df["origin_dep_windgusts_10m"], errors="coerce")
     if "origin_dep_visibility" in df.columns:
-        # visibility in meters from Open-Meteo; cap at 25000m (25 km = clear VFR ceiling)
         vis = pd.to_numeric(df["origin_dep_visibility"], errors="coerce")
         df["origin_dep_visibility_m"] = vis.clip(upper=25000.0)
     if "origin_dep_cape" in df.columns:
-        # CAPE in J/kg; log1p transform to compress the heavy right tail
         cape = pd.to_numeric(df["origin_dep_cape"], errors="coerce").clip(lower=0.0)
         df["origin_dep_cape_jkg"] = cape
         df["origin_dep_log1p_cape"] = np.log1p(cape)
@@ -266,31 +254,45 @@ def _counts_within_window_for_queries(sorted_pool_ns: np.ndarray, sorted_query_n
 def _build_congestion_time_dicts_from_history(
     hist: pd.DataFrame,
 ) -> Tuple[Dict[Tuple[str, object], np.ndarray], Dict[Tuple[str, str, object], np.ndarray]]:
+    """
+    Build congestion lookup dicts from history pool.
+
+    Important:
+    Keep all derived columns on the same DataFrame and apply one shared filter
+    at the end. This avoids subtle length mismatches from constructing a new
+    DataFrame out of separately filtered arrays/Series.
+    """
     h = hist.copy()
     h["Origin"] = h.get("Origin", "").astype(str).str.upper().str.strip()
     h["Reporting_Airline"] = h.get("Reporting_Airline", "").astype(str).str.upper().str.strip()
 
     if "dep_dt_local" not in h.columns:
-        raise KeyError("History pool must include dep_dt_local for congestion-from-history. Re-run prepare_dataset.py to rebuild history pool with dep_dt_local kept.")
+        raise KeyError(
+            "History pool must include dep_dt_local for congestion-from-history. "
+            "Re-run prepare_dataset.py to rebuild history pool with dep_dt_local kept."
+        )
 
     dep_local = pd.to_datetime(h["dep_dt_local"], errors="coerce")
     dep_utc = pd.to_datetime(dep_local, errors="coerce", utc=True)
-    dep_ns = dep_utc.astype("int64")
-    valid = dep_ns != np.iinfo("int64").min
+    dep_ns = pd.to_numeric(dep_utc.astype("int64"), errors="coerce")
 
     if "dep_local_date" in h.columns:
-        dep_local_date = pd.Series(h["dep_local_date"])
+        h["dep_local_date"] = pd.to_datetime(h["dep_local_date"], errors="coerce").dt.date
     else:
-        dep_local_date = dep_local.dt.date
+        h["dep_local_date"] = dep_local.dt.date
 
-    h2 = pd.DataFrame(
-        {
-            "Origin": h.loc[valid, "Origin"].values,
-            "Reporting_Airline": h.loc[valid, "Reporting_Airline"].values,
-            "dep_local_date": pd.Series(dep_local_date.loc[valid].values),
-            "dep_ns": dep_ns[valid],
-        }
+    h["dep_ns"] = dep_ns
+
+    valid = (
+        h["Origin"].notna()
+        & h["Reporting_Airline"].notna()
+        & h["dep_local_date"].notna()
+        & h["dep_ns"].notna()
+        & (h["dep_ns"] != np.iinfo("int64").min)
     )
+
+    h2 = h.loc[valid, ["Origin", "Reporting_Airline", "dep_local_date", "dep_ns"]].copy()
+    h2["dep_ns"] = h2["dep_ns"].astype(np.int64)
 
     h2 = h2.sort_values(["Origin", "dep_local_date", "dep_ns"], kind="mergesort")
 
@@ -450,11 +452,6 @@ def add_flightnum_od_depdelay_means_from_history(
       - flightnum_od_depdelay_mean_last{W}  for W in windows_days (calendar-day windows)
       - flightnum_od_support_count_last{Wmax}d
       - flightnum_od_low_support_last{Wmax}d
-
-    IMPORTANT:
-      - uses strictly PRIOR observations (no leakage) by processing in time order and only
-        adding current-row delay AFTER computing features for that row.
-      - windowed means are over the last W calendar days (not last W flights).
     """
     df = df.copy()
     windows = sorted({int(w) for w in windows_days if int(w) > 0})
@@ -504,14 +501,12 @@ def add_flightnum_od_depdelay_means_from_history(
     df_small = df_small.sort_values(sort_cols, kind="mergesort")
     hist_small = hist_small.sort_values(sort_cols, kind="mergesort")
 
-    # output columns
     out_means = {w: pd.Series(np.nan, index=df.index, dtype="float64") for w in windows}
     out_medians = {w: pd.Series(np.nan, index=df.index, dtype="float64") for w in windows}
     out_stds = {w: pd.Series(np.nan, index=df.index, dtype="float64") for w in windows}
     out_supp = pd.Series(np.zeros(len(df), dtype=np.int16), index=df.index, dtype="Int16")
     out_low = pd.Series(np.ones(len(df), dtype=np.int8), index=df.index, dtype="Int8")
 
-    # build grouped history arrays
     hist_groups: Dict[Tuple, Tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
     if not hist_small.empty:
         h_dates = hist_small["FlightDate"].to_numpy()
@@ -594,9 +589,6 @@ def add_flightnum_od_depdelay_means_from_history(
         n_hist = len(h_dates_i)
         n_df_g = len(df_dates_i)
 
-        # Maintain:
-        # - lastN flights deque for "recent flight history" (not requested as feature but useful if you later want it)
-        # - window deques for each W in days: store (date_int, delay) for last W calendar days
         lastN = deque(maxlen=int(n_recent))
         win_deques = {w: deque() for w in windows}
         win_sums = {w: 0.0 for w in windows}
@@ -616,7 +608,6 @@ def add_flightnum_od_depdelay_means_from_history(
 
         def _push_to_all(date_int: int, delayv: float):
             for w in windows:
-                # store the observation at its FlightDate
                 win_deques[w].append((date_int, float(delayv)))
                 win_sums[w] += float(delayv)
                 win_counts[w] += 1
@@ -625,7 +616,6 @@ def add_flightnum_od_depdelay_means_from_history(
             next_df_date = int(df_dates_i[i_df])
             next_df_t = int(df_t_i[i_df])
 
-            # add all HISTORY events strictly before this df row (date, then time)
             while i_hist < n_hist:
                 hd = int(h_dates_i[i_hist])
                 ht = int(h_t_i[i_hist])
@@ -638,10 +628,8 @@ def add_flightnum_od_depdelay_means_from_history(
                 else:
                     break
 
-            # evict old observations per window
             _evict_all(next_df_date)
 
-            # compute features for this df row (based on prior obs only)
             for w in windows:
                 if win_counts[w] > 0:
                     vals_w = [x[1] for x in win_deques[w]]
@@ -654,12 +642,10 @@ def add_flightnum_od_depdelay_means_from_history(
                     out_medians[w].loc[df_idx_i[i_df]] = np.nan
                     out_stds[w].loc[df_idx_i[i_df]] = np.nan
 
-            # support + low-support based on longest window
             supp = int(win_counts[wmax])
             out_supp.loc[df_idx_i[i_df]] = np.int16(min(supp, np.iinfo(np.int16).max))
             out_low.loc[df_idx_i[i_df]] = np.int8(1 if supp <= int(low_support_leq) else 0)
 
-            # now add THIS row’s delay into the windows for future rows (still no leakage)
             dv = float(df_delay_i[i_df]) if np.isfinite(df_delay_i[i_df]) else np.nan
             if np.isfinite(dv):
                 lastN.append(dv)
@@ -677,22 +663,11 @@ def add_flightnum_od_depdelay_means_from_history(
     return df
 
 
-# ---------- NEW: carrier + carrier-origin rolling means/stds over multiple windows ----------
 def add_carrier_dep_delay_baselines_from_history_multi(
     df: pd.DataFrame,
     hist: pd.DataFrame,
     windows_days: List[int],
 ) -> pd.DataFrame:
-    """
-    Adds:
-      carrier_depdelay_mean_last{W}
-      carrier_depdelay_std_last{W}   ← volatility signal
-      carrier_origin_depdelay_mean_last{W}
-    where W is in windows_days.
-
-    Uses daily carrier (and carrier-origin) mean dep delay, then rolling over W days, shifted by 1 day (no leakage).
-    std captures carrier operational volatility: high std = chaotic ops (weather/ATC events).
-    """
     df = df.copy()
     windows = sorted({int(w) for w in windows_days if int(w) > 0})
     if not windows:
@@ -759,20 +734,11 @@ def add_carrier_dep_delay_baselines_from_history_multi(
     return df
 
 
-# ---------- NEW: origin-airport rolling means over multiple windows ----------
 def add_origin_dep_delay_baselines_from_history_multi(
     df: pd.DataFrame,
     hist: pd.DataFrame,
     windows_days: List[int],
 ) -> pd.DataFrame:
-    """
-    Adds:
-      origin_depdelay_mean_last{W}
-      origin_depdelay_std_last{W}   -- airport-level operational volatility
-    where W is in windows_days.
-
-    Uses daily origin mean dep delay (all carriers), rolling over W days, shifted by 1 day (no leakage).
-    """
     df = df.copy()
     windows = sorted({int(w) for w in windows_days if int(w) > 0})
     if not windows:
@@ -818,19 +784,6 @@ def add_tail_rolling_history(
     hist: pd.DataFrame,
     windows_days: List[int],
 ) -> pd.DataFrame:
-    """
-    Rolling departure delay stats per individual aircraft (tail number).
-
-    Captures aircraft-specific reliability — maintenance issues, chronic
-    problems with a specific airframe show up as persistent delays on that tail.
-    Distinct from flight-number history: same flight can fly on different aircraft.
-
-    New columns (per window W in windows_days):
-      tail_depdelay_mean_last{W}
-      tail_lateaircraft_rate_last{W}
-
-    All computed with 1-day lag (no leakage).
-    """
     df = df.copy()
     windows = sorted({int(w) for w in windows_days if int(w) > 0})
     if not windows:
@@ -899,20 +852,6 @@ def add_dest_rolling_stats(
     hist: pd.DataFrame,
     windows_days: List[int],
 ) -> pd.DataFrame:
-    """
-    Rolling departure delay stats for the DESTINATION airport.
-
-    Captures destination operational health independently of origin.
-    A congested/delayed destination creates ATC ground delay programs that
-    ripple back as departure holds at origin airports.  Covers all routes —
-    complementing hub_spillover which only covers named hub airports.
-
-    New columns (per window W in windows_days):
-      dest_depdelay_mean_last{W}
-      dest_lateaircraft_rate_last{W}
-
-    All computed with 1-day lag (no leakage).
-    """
     df = df.copy()
     windows = sorted({int(w) for w in windows_days if int(w) > 0})
     if not windows:
@@ -925,7 +864,7 @@ def add_dest_rolling_stats(
 
     has_la = "LateAircraftDelay" in h.columns
     if has_la:
-        h["LateAircraftDelay"] = pd.to_numeric(h["LateAircraftDelay"], errors="coerce").fillna(0.0)
+        h["LateAircraftDelay"] = pd.to_numeric(h.get("LateAircraftDelay"), errors="coerce").fillna(0.0)
         h["_has_la"] = (h["LateAircraftDelay"] > 0).astype(float)
 
     o = h.dropna(subset=["Origin", "FlightDate", "DepDelayMinutes"]).copy()
@@ -978,41 +917,13 @@ def add_wn_hub_spillover_from_history(
     windows_days: List[int],
     hubs: Optional[List[str]] = None,
 ) -> pd.DataFrame:
-    """
-    Captures network-level delay propagation from WN's key hub airports.
-
-    For each hub airport, compute rolling historical:
-      - mean departure delay (depdelay_mean)
-      - late-aircraft rate (lateaircraft_rate, if LateAircraftDelay available)
-
-    These are joined to ALL flights (not just hub departures) on FlightDate alone,
-    capturing the network propagation effect: a bad day at DEN yesterday tends to
-    ripple through the entire WN network tomorrow (validated r=0.38 for DEN last1).
-
-    All rolling stats use a 1-day shift (shift(1)) to prevent leakage.
-
-    New features (per hub index I in enumerate(hubs), per window W):
-      hub_{I}_depdelay_mean_last{W}
-      hub_{I}_lateaircraft_rate_last{W}   (only if LateAircraftDelay in history)
-
-    Hub features are named by position (hub_0_, hub_1_, ...) rather than by IATA
-    code so that training configs are airline-agnostic — the same feature list works
-    for any airline as long as the config specifies the same number of hubs.  The
-    mapping from index → airport is recorded in the blueprint feature config under
-    features_dep.hub_spillover.hubs.
-
-    Parameters
-    ----------
-    hubs : list of IATA codes.  Defaults to WN's top hubs by next-day spillover
-           correlation: ['DEN', 'PHX', 'BWI', 'MDW', 'BNA']
-    """
     df = df.copy()
     windows = sorted({int(w) for w in windows_days if int(w) > 0})
     if not windows:
         return df
 
     if hubs is None:
-        hubs = ["DEN", "PHX", "BWI", "MDW", "BNA"]  # WN default; see AIRLINE_HUB_PRESETS
+        hubs = ["DEN", "PHX", "BWI", "MDW", "BNA"]
     hubs = [h.upper().strip() for h in hubs]
 
     h = hist.copy()
@@ -1027,7 +938,6 @@ def add_wn_hub_spillover_from_history(
 
     h_hub = h[h["Origin"].isin(hubs)].dropna(subset=["FlightDate"]).copy()
 
-    # Daily aggregates per hub airport
     agg_dict = {"DepDelayMinutes": "mean"}
     if has_late_aircraft:
         agg_dict["_has_lateaircraft"] = "mean"
@@ -1039,13 +949,12 @@ def add_wn_hub_spillover_from_history(
         .sort_values(["Origin", "FlightDate"])
     )
 
-    # Rolling with 1-day shift per hub, then pivot to wide (one row per date)
     all_dates = hub_daily["FlightDate"].drop_duplicates().sort_values()
     date_df = pd.DataFrame({"FlightDate": all_dates})
 
     for i, hub in enumerate(hubs):
         h_sub = hub_daily[hub_daily["Origin"] == hub].set_index("FlightDate")
-        h_sub = h_sub.reindex(all_dates)  # fill missing dates with NaN
+        h_sub = h_sub.reindex(all_dates)
 
         for w in windows:
             _w = int(w)
@@ -1073,14 +982,9 @@ def add_wn_hub_spillover_from_history(
     return df
 
 
-# Generic alias (works for any airline when hubs list is provided or looked up via AIRLINE_HUB_PRESETS)
 add_hub_spillover_from_history = add_wn_hub_spillover_from_history
 
 
-# ---------- Hub airport weather (Open-Meteo, daily) ----------
-
-# Fixed coordinates for WN's key hubs.  Lat/lon taken from official airport data.
-# tz is the IANA timezone used by Open-Meteo for daily aggregation.
 WN_HUB_COORDS: Dict[str, Tuple[float, float, str]] = {
     "DEN": (39.8561, -104.6737, "America/Denver"),
     "PHX": (33.4373, -112.0078, "America/Phoenix"),
@@ -1089,39 +993,29 @@ WN_HUB_COORDS: Dict[str, Tuple[float, float, str]] = {
     "BNA": (36.1245, -86.6782, "America/Chicago"),
 }
 
-# Hub lists for major US carriers, ordered by network-spillover importance.
-# Override per-airline via cfg["features_dep"]["hub_spillover"]["hubs"] or
-# use cfg["features_dep"]["hub_spillover"]["airline"] to select a preset.
 AIRLINE_HUB_PRESETS: Dict[str, List[str]] = {
-    "WN": ["DEN", "PHX", "BWI", "MDW", "BNA"],   # Southwest
-    "AA": ["DFW", "CLT", "ORD", "MIA", "PHX"],   # American
-    "DL": ["ATL", "DTW", "MSP", "LAX", "SLC"],   # Delta
-    "UA": ["ORD", "EWR", "IAH", "DEN", "LAX"],   # United
-    "B6": ["JFK", "BOS", "FLL", "MCO", "LGB"],   # JetBlue
-    "AS": ["SEA", "LAX", "PDX", "ANC", "SFO"],   # Alaska
-    "NK": ["FLL", "MCO", "DFW", "ORD", "DEN"],   # Spirit
-    "F9": ["DEN", "MCO", "FLL", "LAX", "PHX"],   # Frontier
-    "G4": ["PIE", "SFB", "AZA", "PGD", "LAL"],   # Allegiant
+    "WN": ["DEN", "PHX", "BWI", "MDW", "BNA"],
+    "AA": ["DFW", "CLT", "ORD", "MIA", "PHX"],
+    "DL": ["ATL", "DTW", "MSP", "LAX", "SLC"],
+    "UA": ["ORD", "EWR", "IAH", "DEN", "LAX"],
+    "B6": ["JFK", "BOS", "FLL", "MCO", "LGB"],
+    "AS": ["SEA", "LAX", "PDX", "ANC", "SFO"],
+    "NK": ["FLL", "MCO", "DFW", "ORD", "DEN"],
+    "F9": ["DEN", "MCO", "FLL", "LAX", "PHX"],
+    "G4": ["PIE", "SFB", "AZA", "PGD", "LAL"],
 }
 
-# Alias without the WN-specific name so callers for other airlines read naturally.
-
-# Daily variables requested from Open-Meteo archive
 _HUB_DAILY_VARS = [
-    "temperature_2m_max",   # °C → convert to K
-    "temperature_2m_min",   # °C → convert to K
-    "precipitation_sum",    # mm
-    "windgusts_10m_max",    # km/h
+    "temperature_2m_max",
+    "temperature_2m_min",
+    "precipitation_sum",
+    "windgusts_10m_max",
 ]
 
-# Hourly variables for daily-aggregated hub features (cape, visibility).
-# These aren't available as daily aggregates from Open-Meteo, so we fetch
-# hourly and reduce: max(cape) per day, min(visibility) per day.
 _HUB_HOURLY_VARS = ["cape", "visibility"]
 
 
 def _hub_req_with_backoff(url: str, params: dict, max_tries: int = 8) -> "requests.Response":  # type: ignore[name-defined]
-    """Minimal HTTP GET with exponential-backoff retry (mirrors prepare_dataset._req_with_backoff)."""
     import requests as _req
     import time as _time
 
@@ -1159,11 +1053,6 @@ def _hub_req_with_backoff(url: str, params: dict, max_tries: int = 8) -> "reques
 
 def _fetch_hub_daily_weather(hub: str, lat: float, lon: float, tz: str,
                               start: str, end: str, cache_dir: Path) -> pd.DataFrame:
-    """
-    Fetch daily weather for one hub airport from Open-Meteo archive, with local cache.
-    Returns DataFrame with columns: FlightDate, temp_max_K, temp_min_K,
-    precip_sum_mm, windgusts_max_kmh.
-    """
     safe_tz = tz.replace("/", "__")
     cache_path = cache_dir / f"hub_{hub}_{start}_{end}_{safe_tz}_daily.parquet"
     if cache_path.exists():
@@ -1186,11 +1075,9 @@ def _fetch_hub_daily_weather(hub: str, lat: float, lon: float, tz: str,
         wx = pd.DataFrame(daily)
         wx["FlightDate"] = pd.to_datetime(wx["time"])
         wx = wx.drop(columns=["time"])
-        # Convert temperature °C → K
         for col in ["temperature_2m_max", "temperature_2m_min"]:
             if col in wx.columns:
                 wx[col] = pd.to_numeric(wx[col], errors="coerce") + 273.15
-        # Rename to model-friendly names
         wx = wx.rename(columns={
             "temperature_2m_max": "temp_max_K",
             "temperature_2m_min": "temp_min_K",
@@ -1205,13 +1092,6 @@ def _fetch_hub_daily_weather(hub: str, lat: float, lon: float, tz: str,
 
 def _fetch_hub_hourly_weather(hub: str, lat: float, lon: float, tz: str,
                                start: str, end: str, cache_dir: Path) -> pd.DataFrame:
-    """
-    Fetch hourly cape + visibility for one hub, aggregate to daily:
-      cape_max    -- daily max CAPE (J/kg), indicates convective storm potential
-      visibility_min_m -- daily minimum visibility (m), captures IFR / fog / smoke events
-
-    Returns DataFrame with columns: FlightDate, cape_max, visibility_min_m.
-    """
     safe_tz = tz.replace("/", "__")
     cache_path = cache_dir / f"hub_{hub}_{start}_{end}_{safe_tz}_hourly_cape_vis.parquet"
     if cache_path.exists():
@@ -1252,30 +1132,6 @@ def add_wn_hub_weather_from_openmeteo(
     hubs: Optional[List[str]] = None,
     cache_dir: Optional[str] = None,
 ) -> pd.DataFrame:
-    """
-    Adds daily weather features for WN's key hub airports, joined to ALL flights
-    on FlightDate alone.  Provides both day-of ("_today") and previous-day
-    ("_yesterday") variants as leading indicators of network-wide delay risk.
-
-    Daily features per hub H (from Open-Meteo daily API):
-      hub_{H}_precip_sum_mm_today / _yesterday
-      hub_{H}_windgusts_max_kmh_today / _yesterday
-
-    Hourly-aggregated features per hub H (max/min over each calendar day):
-      hub_{H}_log1p_cape_max_today / _yesterday    -- log1p(daily max CAPE), thunderstorm risk
-      hub_{H}_visibility_min_m_today / _yesterday  -- daily min visibility, IFR/flow reduction
-
-    4 vars × 2 time offsets × N hubs numeric features total.
-
-    Weather data is fetched from Open-Meteo archive API (free, no key required)
-    and cached locally.  In production, swap archive URL for forecast endpoint.
-
-    Parameters
-    ----------
-    hubs : list of IATA codes.  Defaults to WN_HUB_COORDS keys.
-    cache_dir : path (relative to DATA_ROOT) for caching raw weather parquets.
-                Defaults to "weather_cache".
-    """
     df = df.copy()
     df["FlightDate"] = pd.to_datetime(df.get("FlightDate"), errors="coerce").dt.normalize()
 
@@ -1300,16 +1156,13 @@ def add_wn_hub_weather_from_openmeteo(
         wx_h = _fetch_hub_hourly_weather(hub, lat, lon, tz, start_str, end_str, _cache_root)
         wx_h["FlightDate"] = pd.to_datetime(wx_h["FlightDate"]).dt.normalize()
         wx_h = wx_h.set_index("FlightDate").sort_index()
-        # log1p-transform CAPE (heavy right tail)
         if "cape_max" in wx_h.columns:
             wx_h["log1p_cape_max"] = np.log1p(wx_h["cape_max"].clip(lower=0))
 
-        # Merge hourly-derived daily stats into the daily frame
         for col in ["log1p_cape_max", "visibility_min_m"]:
             if col in wx_h.columns:
                 wx_d[col] = wx_h[col]
 
-        # Reindex to cover all dates
         all_dates = pd.date_range(wx_d.index.min(), wx_d.index.max(), freq="D")
         wx_d = wx_d.reindex(all_dates)
 
@@ -1331,18 +1184,6 @@ def add_delay_cause_rates_from_history(
     hist: pd.DataFrame,
     windows_days: List[int],
 ) -> pd.DataFrame:
-    """
-    Computes rolling historical delay-cause attribution rates from BTS cause columns.
-    All computed with 1-day lag (no leakage).
-
-    New numeric features per window W in windows_days:
-      origin_nas_rate_last{W}           -- fraction of flights at Origin with NASDelay > 0
-      origin_lateaircraft_rate_last{W}  -- fraction with LateAircraftDelay > 0 (propagation proxy)
-      origin_weather_rate_last{W}       -- fraction with WeatherDelay > 0
-      carrier_lateaircraft_rate_last{W} -- network-wide fraction of carrier flights with LateAircraftDelay > 0
-
-    If the cause columns are not present in hist (old history pool), all features are NaN.
-    """
     df = df.copy()
     windows = sorted({int(w) for w in windows_days if int(w) > 0})
     if not windows:
@@ -1364,12 +1205,10 @@ def add_delay_cause_rates_from_history(
     for c in cause_cols_needed:
         h[c] = pd.to_numeric(h.get(c), errors="coerce").fillna(0.0)
 
-    # Binary flags: delay cause was non-zero
     h["_has_nas"]          = (h["NASDelay"] > 0).astype(float)
     h["_has_lateaircraft"] = (h["LateAircraftDelay"] > 0).astype(float)
     h["_has_weather"]      = (h["WeatherDelay"] > 0).astype(float)
 
-    # ---- Origin-level daily rates ----
     o = h.dropna(subset=["Origin", "FlightDate"]).copy()
     o_daily = (
         o.groupby(["Origin", "FlightDate"], as_index=False)
@@ -1406,7 +1245,6 @@ def add_delay_cause_rates_from_history(
     df = df.merge(o_daily[["Origin", "FlightDate"] + origin_rate_cols],
                   on=["Origin", "FlightDate"], how="left")
 
-    # ---- Carrier-level late-aircraft rate (captures network-wide propagation) ----
     c = h.dropna(subset=["Reporting_Airline", "FlightDate"]).copy()
     c_daily = (
         c.groupby(["Reporting_Airline", "FlightDate"], as_index=False)
@@ -1454,30 +1292,9 @@ def add_prior_leg_propagation_features(
     hist: pd.DataFrame,
     windows_days: List[int],
 ) -> pd.DataFrame:
-    """
-    Propagation delay risk: for each flight, estimate the expected departure
-    delay of the inbound leg (prior rotation) using historical tail-number data.
-
-    Algorithm
-    ---------
-    1. Sort history by (Tail_Number, FlightDate, dep_dt_local).
-    2. For each hist flight, shift(1) within (Tail, Date) to get the prior
-       leg's DepDelayMinutes, but only when prev_dest == this flight's Origin
-       (confirming it's a connected rotation, not a re-assignment).
-    3. Aggregate these prior-leg delays daily by (Airline, FlightNum, Origin).
-    4. Rolling mean over windows_days with a 1-day shift for no leakage.
-    5. Merge back to df.
-
-    Also adds:
-      is_first_leg_of_day  — 1 when tail_leg_num_day == 1 (no inbound risk),
-                             0 otherwise.
-
-    New columns: prior_leg_depdelay_mean_last{W}  for W in windows_days.
-    """
     df = df.copy()
     windows = sorted({int(w) for w in windows_days if int(w) > 0})
 
-    # is_first_leg_of_day (derived from tail_leg_num_day already in df)
     if "tail_leg_num_day" in df.columns:
         leg = pd.to_numeric(df["tail_leg_num_day"], errors="coerce")
         df["is_first_leg_of_day"] = (leg == 1).astype("Int8")
@@ -1487,13 +1304,11 @@ def add_prior_leg_propagation_features(
     if not windows:
         return df
 
-    # Require tail number and timing in history
     if "Tail_Number" not in hist.columns or "dep_dt_local" not in hist.columns:
         for w in windows:
             df[f"prior_leg_depdelay_mean_last{w}"] = np.nan
         return df
 
-    # --- Step 1: prior-leg delay for every history flight ---
     need = ["FlightDate", "Tail_Number", "Reporting_Airline",
             "Flight_Number_Reporting_Airline", "Origin", "Dest",
             "dep_dt_local", "DepDelayMinutes"]
@@ -1522,7 +1337,6 @@ def add_prior_leg_propagation_features(
     )
     h["prior_leg_depdelay"] = np.where(connected, h["_prev_delay"], np.nan)
 
-    # --- Step 2: daily mean by (Airline, FlightNum, Origin) ---
     key = ["Reporting_Airline", "Flight_Number_Reporting_Airline", "Origin"]
     h_valid = h.dropna(subset=key + ["FlightDate", "prior_leg_depdelay"]).copy()
     h_valid = h_valid.dropna(subset=["Flight_Number_Reporting_Airline"])
@@ -1538,7 +1352,6 @@ def add_prior_leg_propagation_features(
         .sort_values(key + ["FlightDate"])
     )
 
-    # --- Step 3: rolling with 1-day shift (no leakage) ---
     for w in windows:
         _w = int(w)
         daily[f"prior_leg_depdelay_mean_last{w}"] = (
@@ -1547,7 +1360,6 @@ def add_prior_leg_propagation_features(
             .reset_index(level=[0, 1, 2], drop=True)
         )
 
-    # --- Step 4: merge into df ---
     feat_cols = [f"prior_leg_depdelay_mean_last{w}" for w in windows]
     keep = key + ["FlightDate"] + feat_cols
 
@@ -1646,14 +1458,12 @@ def main():
         "Tail_Number",
         "aircraft_type",
         "Aircraft_Age_Bucket",
-        # daily weather
         "origin_temperature_2m_max",
         "origin_temperature_2m_min",
         "origin_precipitation_sum",
         "origin_windspeed_10m_max",
         "origin_windgusts_10m_max",
         "origin_weathercode",
-        # hourly weather at departure time
         "origin_dep_temperature_2m",
         "origin_dep_precipitation",
         "origin_dep_windspeed_10m",
@@ -1667,7 +1477,6 @@ def main():
     print(f"[INFO] reading enriched -> {in_path}")
     df = _read_parquet_projected(in_path, df_cols_want)
 
-    # Optional date range filter — enables fast 2023-only experiments without re-running prepare_dataset
     cfg_start = cfg.get("start_date")
     cfg_end   = cfg.get("end_date")
     if cfg_start or cfg_end:
@@ -1699,7 +1508,6 @@ def main():
         "dep_dt_local",
         "dep_local_date",
         "Tail_Number",
-        # BTS delay cause breakdown — for rolling cause-rate features
         "NASDelay",
         "LateAircraftDelay",
         "WeatherDelay",
@@ -1755,13 +1563,11 @@ def main():
 
     df = add_weather_kelvin(df)
 
-    # Numeric route features from BTS
     if "CRSElapsedTime" in df.columns:
         df["CRSElapsedTime"] = pd.to_numeric(df["CRSElapsedTime"], errors="coerce")
     if "Distance" in df.columns:
         df["Distance"] = pd.to_numeric(df["Distance"], errors="coerce")
 
-    # Month of year — captures seasonal demand/weather patterns over a full year
     fd_dt = pd.to_datetime(df["FlightDate"], errors="coerce")
     df["flight_month"] = fd_dt.dt.month.astype("Int8")
 
@@ -1788,8 +1594,6 @@ def main():
 
     tail_cfg = feat_cfg.get("tail_history") or {}
     if tail_cfg.get("enabled", True):
-        # Tail_Number is not stored in the prepared history pool — read it directly
-        # from the full enriched parquet (all dates, so Jan-2023 has Dec-2022 lookback)
         _tail_hist_cols = ["FlightDate", "Tail_Number", "DepDelayMinutes", "LateAircraftDelay"]
         _tail_hist = _read_parquet_projected(in_path, _tail_hist_cols)
         _tail_hist["FlightDate"] = pd.to_datetime(_tail_hist.get("FlightDate"), errors="coerce").dt.normalize()
@@ -1801,7 +1605,7 @@ def main():
         df = add_dest_rolling_stats(df, hist, windows_days=windows_days)
 
     hub_cfg = feat_cfg.get("hub_spillover") or {}
-    hub_hubs = hub_cfg.get("hubs") or None  # explicit list wins
+    hub_hubs = hub_cfg.get("hubs") or None
     if hub_hubs is None:
         explicit_airline = hub_cfg.get("airline")
         if not explicit_airline:
@@ -1821,15 +1625,12 @@ def main():
 
     wx_cfg = feat_cfg.get("hub_weather") or {}
     if wx_cfg.get("enabled", True):
-        wx_hubs = wx_cfg.get("hubs") or None  # None → use WN_HUB_COORDS keys
+        wx_hubs = wx_cfg.get("hubs") or None
         wx_cache = wx_cfg.get("cache_dir") or "weather_cache"
         df = add_wn_hub_weather_from_openmeteo(df, hubs=wx_hubs, cache_dir=wx_cache)
 
     df = add_turn_time_hours(df)
 
-    # prior_leg needs Tail_Number + dep_dt_local, which are not in the prepared history pool.
-    # Read the columns we need from the full enriched parquet (no date filter, so Jan-2023
-    # lookback can reach Dec-2022). Disable via features_dep.prior_leg.enabled=false.
     prior_leg_cfg = feat_cfg.get("prior_leg") or {}
     if prior_leg_cfg.get("enabled", True):
         _prior_hist_cols = [
