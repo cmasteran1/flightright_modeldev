@@ -195,8 +195,8 @@ _reg_num("origin_dep_cape_jkg", 0, 10000, "origin CAPE at dep (J/kg)")
 _reg_num("origin_dep_log1p_cape", 0, 15, "origin log1p(CAPE) at dep")
 _reg_num("origin_dep_cloudcover_pct", 0, 100, "origin cloudcover at dep (%)")
 
-# --- Destination weather (hourly at arrival) ---
-_reg_num("dest_arr_temperature_2m", 180, 340, "dest hourly temp at arr")
+# --- Destination weather (hourly at arrival) — raw Celsius (not converted to K)
+_reg_num("dest_arr_temperature_2m", -60, 60, "dest hourly temp at arr (C)")
 _reg_num("dest_arr_precipitation", 0, 300, "dest hourly precip at arr")
 _reg_num("dest_arr_windspeed_10m", 0, 400, "dest hourly windspeed at arr")
 _reg_num("dest_arr_windgusts_10m", 0, 500, "dest hourly windgusts at arr")
@@ -294,16 +294,16 @@ for _w in [7, 14]:
 
 # --- Arrival-specific: wheels-off slip stats ---
 for _w in [7, 14]:
-    _reg_num(f"wo_slip_mean_{_w}d_fn_od", -120, 300, f"wheels-off slip mean {_w}d flight-num OD")
+    _reg_num(f"wo_slip_mean_{_w}d_fn_od", -600, 800, f"wheels-off slip mean {_w}d flight-num OD")
     _reg_num(f"wo_slip_n_{_w}d_fn_od", 0, 500, f"wheels-off slip count {_w}d flight-num OD")
-    _reg_num(f"wo_slip_mean_{_w}d_origin_blk", -120, 300, f"wheels-off slip mean {_w}d origin-block")
-    _reg_num(f"wo_slip_n_{_w}d_origin_blk", 0, 500, f"wheels-off slip count {_w}d origin-block")
+    _reg_num(f"wo_slip_mean_{_w}d_origin_blk", -300, 500, f"wheels-off slip mean {_w}d origin-block")
+    _reg_num(f"wo_slip_n_{_w}d_origin_blk", 0, 1200, f"wheels-off slip count {_w}d origin-block")
 
 # --- Arrival-specific: destination congestion ---
 _reg_num("dest_arrivals_pm60_sched", 0, 500, "dest arrivals +-60min (scheduled)")
-_reg_num("dest_airline_arrivals_pm60_sched", 0, 300, "dest airline arrivals +-60min (scheduled)")
+_reg_num("dest_airline_arrivals_pm60_sched", 0, 500, "dest airline arrivals +-60min (scheduled)")
 _reg_num("dest_arrivals_pm60_eta", 0, 500, "dest arrivals +-60min (ETA)")
-_reg_num("dest_airline_arrivals_pm60_eta", 0, 300, "dest airline arrivals +-60min (ETA)")
+_reg_num("dest_airline_arrivals_pm60_eta", 0, 500, "dest airline arrivals +-60min (ETA)")
 
 # --- Raw weather column names (from prepare_dataset before rename) ---
 for _raw in [
