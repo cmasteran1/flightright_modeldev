@@ -573,10 +573,11 @@ FEATURE: carrier_origin_depdelay_mean_last1 / last7 / last14 [BOTH]
   FlightLabs: From offline cache: filter airline_iata = WN AND dep_iata =
               Origin. Compute mean of dep_delayed over each window.
 
-FEATURE: carrier_origin_depdelay_std_last1 / last7 / last14 [ARR]
+FEATURE: carrier_origin_depdelay_std_last7 / last14 [ARR]
   What it is: Standard deviation of departure delay for this carrier at
               this origin over past N days.
   FlightLabs: Same offline cache filter. Compute std.
+  Note: std_last1 DROPPED — std is undefined for a single observation.
 
 ────────── ORIGIN AIRPORT DEPARTURE DELAY STATISTICS (ALL CARRIERS) ──────────
 
@@ -592,10 +593,11 @@ FEATURE: origin_depdelay_mean_last1 / last7 / last14 [BOTH]
               Note: the nightly pull collects all-carrier data at hub airports
               already; extend to origin airports as needed.
 
-FEATURE: origin_depdelay_std_last1 / last7 / last14 [ARR]
+FEATURE: origin_depdelay_std_last7 / last14 [ARR]
   What it is: Standard deviation of departure delays at origin (all carriers)
               over past N days.
   FlightLabs: Same offline cache records. Compute std.
+  Note: std_last1 DROPPED — std is undefined for a single observation.
 
 ────────── DELAY CAUSE-RATE FEATURES — ALL DROPPED ──────────
 

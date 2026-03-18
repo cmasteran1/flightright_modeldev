@@ -209,24 +209,28 @@ _reg_num("dest_arr_cloudcover", 0, 100, "dest cloudcover at arr")
 for _w in [1, 7, 14]:
     _reg_num(f"flightnum_od_depdelay_mean_last{_w}", -30, 2000, f"flightnum OD dep delay mean {_w}d")
     _reg_num(f"flightnum_od_depdelay_median_last{_w}", -30, 2000, f"flightnum OD dep delay median {_w}d")
-    _reg_num(f"flightnum_od_depdelay_std_last{_w}", 0, 2000, f"flightnum OD dep delay std {_w}d")
+    if _w >= 2:  # std_last1 dropped: undefined for single observation
+        _reg_num(f"flightnum_od_depdelay_std_last{_w}", 0, 2000, f"flightnum OD dep delay std {_w}d")
 _reg_num("flightnum_od_support_count_last14d", 0, 500, "flightnum OD support count 14d")
 _reg_num("flightnum_od_low_support_last14d", 0, 1, "flightnum OD low support flag")
 
 # --- Carrier rolling departure delay stats ---
 for _w in [1, 7, 14]:
     _reg_num(f"carrier_depdelay_mean_last{_w}", -30, 2000, f"carrier dep delay mean {_w}d")
-    _reg_num(f"carrier_depdelay_std_last{_w}", 0, 2000, f"carrier dep delay std {_w}d")
+    if _w >= 2:
+        _reg_num(f"carrier_depdelay_std_last{_w}", 0, 2000, f"carrier dep delay std {_w}d")
 
 # --- Carrier-origin rolling departure delay stats ---
 for _w in [1, 7, 14]:
     _reg_num(f"carrier_origin_depdelay_mean_last{_w}", -30, 2000, f"carrier-origin dep delay mean {_w}d")
-    _reg_num(f"carrier_origin_depdelay_std_last{_w}", 0, 2000, f"carrier-origin dep delay std {_w}d")
+    if _w >= 2:
+        _reg_num(f"carrier_origin_depdelay_std_last{_w}", 0, 2000, f"carrier-origin dep delay std {_w}d")
 
 # --- Origin rolling departure delay stats ---
 for _w in [1, 7, 14]:
     _reg_num(f"origin_depdelay_mean_last{_w}", -30, 2000, f"origin dep delay mean {_w}d")
-    _reg_num(f"origin_depdelay_std_last{_w}", 0, 2000, f"origin dep delay std {_w}d")
+    if _w >= 2:
+        _reg_num(f"origin_depdelay_std_last{_w}", 0, 2000, f"origin dep delay std {_w}d")
 
 # --- Delay cause rates (origin + carrier) ---
 for _w in [1, 7, 14]:

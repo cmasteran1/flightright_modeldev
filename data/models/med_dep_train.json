@@ -30,7 +30,6 @@
     "flightnum_od_depdelay_median_last7",
     "flightnum_od_depdelay_median_last14",
     "flightnum_od_depdelay_std_last7",
-    "flightnum_od_depdelay_std_last14",
     "flightnum_od_support_count_last14d",
     "flightnum_od_low_support_last14d",
 

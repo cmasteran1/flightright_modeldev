@@ -656,7 +656,8 @@ def add_flightnum_od_depdelay_means_from_history(
     for w in windows:
         df[f"flightnum_od_depdelay_mean_last{w}"] = pd.to_numeric(out_means[w], errors="coerce")
         df[f"flightnum_od_depdelay_median_last{w}"] = pd.to_numeric(out_medians[w], errors="coerce")
-        df[f"flightnum_od_depdelay_std_last{w}"] = pd.to_numeric(out_stds[w], errors="coerce")
+        if int(w) >= 2:  # std is undefined for a single observation
+            df[f"flightnum_od_depdelay_std_last{w}"] = pd.to_numeric(out_stds[w], errors="coerce")
 
     df[f"flightnum_od_support_count_last{wmax}d"] = pd.to_numeric(out_supp, errors="coerce").fillna(0).astype("Int16")
     df[f"flightnum_od_low_support_last{wmax}d"] = pd.to_numeric(out_low, errors="coerce").fillna(1).astype("Int8")
@@ -696,14 +697,14 @@ def add_carrier_dep_delay_baselines_from_history_multi(
             grp.apply(lambda s: s.shift(1).rolling(window=int(w), min_periods=1).mean())
             .reset_index(level=0, drop=True)
         )
-        carr_daily[f"carrier_depdelay_std_last{w}"] = (
-            grp.apply(lambda s: s.shift(1).rolling(window=int(w), min_periods=min(2, int(w))).std())
-            .reset_index(level=0, drop=True)
-            .fillna(0.0)  # std of single observation = 0 (no variability)
-        )
+        if int(w) >= 2:  # std is undefined for a single observation
+            carr_daily[f"carrier_depdelay_std_last{w}"] = (
+                grp.apply(lambda s: s.shift(1).rolling(window=int(w), min_periods=2).std())
+                .reset_index(level=0, drop=True)
+            )
 
     mean_cols = [f"carrier_depdelay_mean_last{w}" for w in windows]
-    std_cols  = [f"carrier_depdelay_std_last{w}"  for w in windows]
+    std_cols  = [f"carrier_depdelay_std_last{w}" for w in windows if int(w) >= 2]
     keep_cols = ["Reporting_Airline", "FlightDate"] + mean_cols + std_cols
     df = df.merge(carr_daily[keep_cols], on=["Reporting_Airline", "FlightDate"], how="left")
 
@@ -721,15 +722,15 @@ def add_carrier_dep_delay_baselines_from_history_multi(
             .apply(lambda s: s.shift(1).rolling(window=int(w), min_periods=1).mean())
             .reset_index(level=[0, 1], drop=True)
         )
-        co_daily[f"carrier_origin_depdelay_std_last{w}"] = (
-            grp_co
-            .apply(lambda s: s.shift(1).rolling(window=int(w), min_periods=min(2, int(w))).std())
-            .reset_index(level=[0, 1], drop=True)
-            .fillna(0.0)  # std of single observation = 0
-        )
+        if int(w) >= 2:
+            co_daily[f"carrier_origin_depdelay_std_last{w}"] = (
+                grp_co
+                .apply(lambda s: s.shift(1).rolling(window=int(w), min_periods=2).std())
+                .reset_index(level=[0, 1], drop=True)
+            )
 
     mean_cols_co = [f"carrier_origin_depdelay_mean_last{w}" for w in windows]
-    std_cols_co  = [f"carrier_origin_depdelay_std_last{w}"  for w in windows]
+    std_cols_co  = [f"carrier_origin_depdelay_std_last{w}" for w in windows if int(w) >= 2]
     keep_cols = ["Reporting_Airline", "Origin", "FlightDate"] + mean_cols_co + std_cols_co
     df = df.merge(co_daily[keep_cols], on=["Reporting_Airline", "Origin", "FlightDate"], how="left")
 
@@ -768,15 +769,15 @@ def add_origin_dep_delay_baselines_from_history_multi(
             .apply(lambda s: s.shift(1).rolling(window=int(w), min_periods=1).mean())
             .reset_index(level=0, drop=True)
         )
-        o_daily[f"origin_depdelay_std_last{w}"] = (
-            grp_o
-            .apply(lambda s: s.shift(1).rolling(window=int(w), min_periods=min(2, int(w))).std())
-            .reset_index(level=0, drop=True)
-            .fillna(0.0)  # std of single observation = 0
-        )
+        if int(w) >= 2:
+            o_daily[f"origin_depdelay_std_last{w}"] = (
+                grp_o
+                .apply(lambda s: s.shift(1).rolling(window=int(w), min_periods=2).std())
+                .reset_index(level=0, drop=True)
+            )
 
     mean_cols_o = [f"origin_depdelay_mean_last{w}" for w in windows]
-    std_cols_o  = [f"origin_depdelay_std_last{w}"  for w in windows]
+    std_cols_o  = [f"origin_depdelay_std_last{w}" for w in windows if int(w) >= 2]
     keep_cols = ["Origin", "FlightDate"] + mean_cols_o + std_cols_o
     df = df.merge(o_daily[keep_cols], on=["Origin", "FlightDate"], how="left")
     return df
