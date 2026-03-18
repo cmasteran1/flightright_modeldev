@@ -205,27 +205,28 @@ _reg_num("dest_arr_cape", 0, 10000, "dest CAPE at arr")
 _reg_num("dest_arr_cloudcover", 0, 100, "dest cloudcover at arr")
 
 # --- Flight-number OD rolling departure delay stats ---
+# Bounds match DepDelayMinutes (0-2000) since 1-day means/medians can equal raw delay
 for _w in [1, 7, 14]:
-    _reg_num(f"flightnum_od_depdelay_mean_last{_w}", -30, 600, f"flightnum OD dep delay mean {_w}d")
-    _reg_num(f"flightnum_od_depdelay_median_last{_w}", -30, 600, f"flightnum OD dep delay median {_w}d")
-    _reg_num(f"flightnum_od_depdelay_std_last{_w}", 0, 600, f"flightnum OD dep delay std {_w}d")
+    _reg_num(f"flightnum_od_depdelay_mean_last{_w}", -30, 2000, f"flightnum OD dep delay mean {_w}d")
+    _reg_num(f"flightnum_od_depdelay_median_last{_w}", -30, 2000, f"flightnum OD dep delay median {_w}d")
+    _reg_num(f"flightnum_od_depdelay_std_last{_w}", 0, 2000, f"flightnum OD dep delay std {_w}d")
 _reg_num("flightnum_od_support_count_last14d", 0, 500, "flightnum OD support count 14d")
 _reg_num("flightnum_od_low_support_last14d", 0, 1, "flightnum OD low support flag")
 
 # --- Carrier rolling departure delay stats ---
 for _w in [1, 7, 14]:
-    _reg_num(f"carrier_depdelay_mean_last{_w}", -30, 600, f"carrier dep delay mean {_w}d")
-    _reg_num(f"carrier_depdelay_std_last{_w}", 0, 600, f"carrier dep delay std {_w}d")
+    _reg_num(f"carrier_depdelay_mean_last{_w}", -30, 2000, f"carrier dep delay mean {_w}d")
+    _reg_num(f"carrier_depdelay_std_last{_w}", 0, 2000, f"carrier dep delay std {_w}d")
 
 # --- Carrier-origin rolling departure delay stats ---
 for _w in [1, 7, 14]:
-    _reg_num(f"carrier_origin_depdelay_mean_last{_w}", -30, 600, f"carrier-origin dep delay mean {_w}d")
-    _reg_num(f"carrier_origin_depdelay_std_last{_w}", 0, 600, f"carrier-origin dep delay std {_w}d")
+    _reg_num(f"carrier_origin_depdelay_mean_last{_w}", -30, 2000, f"carrier-origin dep delay mean {_w}d")
+    _reg_num(f"carrier_origin_depdelay_std_last{_w}", 0, 2000, f"carrier-origin dep delay std {_w}d")
 
 # --- Origin rolling departure delay stats ---
 for _w in [1, 7, 14]:
-    _reg_num(f"origin_depdelay_mean_last{_w}", -30, 600, f"origin dep delay mean {_w}d")
-    _reg_num(f"origin_depdelay_std_last{_w}", 0, 600, f"origin dep delay std {_w}d")
+    _reg_num(f"origin_depdelay_mean_last{_w}", -30, 2000, f"origin dep delay mean {_w}d")
+    _reg_num(f"origin_depdelay_std_last{_w}", 0, 2000, f"origin dep delay std {_w}d")
 
 # --- Delay cause rates (origin + carrier) ---
 for _w in [1, 7, 14]:
@@ -237,21 +238,21 @@ for _w in [1, 7, 14]:
 # --- Hub spillover (indexed 0-4 and named DEN/PHX/BWI/MDW/BNA) ---
 for _h in [0, 1, 2, 3, 4]:
     for _w in [1, 7, 14]:
-        _reg_num(f"hub_{_h}_depdelay_mean_last{_w}", -30, 600, f"hub {_h} dep delay mean {_w}d")
+        _reg_num(f"hub_{_h}_depdelay_mean_last{_w}", -30, 2000, f"hub {_h} dep delay mean {_w}d")
         _reg_num(f"hub_{_h}_lateaircraft_rate_last{_w}", 0, 1, f"hub {_h} late-aircraft rate {_w}d")
 for _hub in ["DEN", "PHX", "BWI", "MDW", "BNA"]:
     for _w in [1, 7, 14]:
-        _reg_num(f"hub_{_hub}_depdelay_mean_last{_w}", -30, 600, f"hub {_hub} dep delay mean {_w}d")
+        _reg_num(f"hub_{_hub}_depdelay_mean_last{_w}", -30, 2000, f"hub {_hub} dep delay mean {_w}d")
         _reg_num(f"hub_{_hub}_lateaircraft_rate_last{_w}", 0, 1, f"hub {_hub} late-aircraft rate {_w}d")
 
 # --- Tail (aircraft) rolling stats ---
 for _w in [1, 7, 14]:
-    _reg_num(f"tail_depdelay_mean_last{_w}", -30, 600, f"tail dep delay mean {_w}d")
+    _reg_num(f"tail_depdelay_mean_last{_w}", -30, 2000, f"tail dep delay mean {_w}d")
     _reg_num(f"tail_lateaircraft_rate_last{_w}", 0, 1, f"tail late-aircraft rate {_w}d")
 
 # --- Destination rolling stats ---
 for _w in [1, 7, 14]:
-    _reg_num(f"dest_depdelay_mean_last{_w}", -30, 600, f"dest dep delay mean {_w}d")
+    _reg_num(f"dest_depdelay_mean_last{_w}", -30, 2000, f"dest dep delay mean {_w}d")
     _reg_num(f"dest_lateaircraft_rate_last{_w}", 0, 1, f"dest late-aircraft rate {_w}d")
 
 # --- Congestion ---
@@ -269,16 +270,16 @@ _reg_num("Distance", 0, 6000, "route distance (miles)")
 
 # --- Prior leg ---
 for _w in [7, 14]:
-    _reg_num(f"prior_leg_depdelay_mean_last{_w}", -30, 600, f"prior leg dep delay mean {_w}d")
+    _reg_num(f"prior_leg_depdelay_mean_last{_w}", -30, 2000, f"prior leg dep delay mean {_w}d")
 
 # --- Arrival-specific: arrival delay rolling stats ---
 for _w in [7, 14]:
-    _reg_num(f"arrdelay_mean_{_w}d_fn_od", -30, 600, f"arr delay mean {_w}d flight-num OD")
+    _reg_num(f"arrdelay_mean_{_w}d_fn_od", -30, 2000, f"arr delay mean {_w}d flight-num OD")
     _reg_num(f"arrdelay_n_{_w}d_fn_od", 0, 500, f"arr delay count {_w}d flight-num OD")
-    _reg_num(f"arrdelay_mean_{_w}d_car_od", -30, 600, f"arr delay mean {_w}d carrier OD")
+    _reg_num(f"arrdelay_mean_{_w}d_car_od", -30, 2000, f"arr delay mean {_w}d carrier OD")
     _reg_num(f"arrdelay_n_{_w}d_car_od", 0, 500, f"arr delay count {_w}d carrier OD")
-_reg_num("arrdelay_median_7d_fn_od", -30, 600, "arr delay median 7d flight-num OD")
-_reg_num("arrdelay_median_7d_car_od", -30, 600, "arr delay median 7d carrier OD")
+_reg_num("arrdelay_median_7d_fn_od", -30, 2000, "arr delay median 7d flight-num OD")
+_reg_num("arrdelay_median_7d_car_od", -30, 2000, "arr delay median 7d carrier OD")
 
 # --- Arrival-specific: airtime rolling stats ---
 for _w in [7, 14]:

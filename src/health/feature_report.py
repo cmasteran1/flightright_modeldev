@@ -21,7 +21,11 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from src.health.health_checks import validate_features, CheckResult
+# Support running both as `python src/health/feature_report.py` and as an import
+try:
+    from src.health.health_checks import validate_features, CheckResult
+except ModuleNotFoundError:
+    from health_checks import validate_features, CheckResult
 
 
 def _safe_float(v) -> Optional[float]:

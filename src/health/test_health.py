@@ -13,14 +13,24 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.health.health_checks import (
-    CheckResult,
-    _FEATURE_REGISTRY,
-    check_bts_api,
-    check_open_meteo_api,
-    validate_features,
-)
-from src.health.feature_report import generate_feature_report
+try:
+    from src.health.health_checks import (
+        CheckResult,
+        _FEATURE_REGISTRY,
+        check_bts_api,
+        check_open_meteo_api,
+        validate_features,
+    )
+    from src.health.feature_report import generate_feature_report
+except ModuleNotFoundError:
+    from health_checks import (
+        CheckResult,
+        _FEATURE_REGISTRY,
+        check_bts_api,
+        check_open_meteo_api,
+        validate_features,
+    )
+    from feature_report import generate_feature_report
 
 
 # ---------------------------------------------------------------------------
