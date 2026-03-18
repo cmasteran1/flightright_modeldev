@@ -1287,8 +1287,8 @@ def add_turn_time_hours(df: pd.DataFrame) -> pd.DataFrame:
 
     ok = df["prev_dest"].astype(str).str.upper() == df["Origin"].astype(str).str.upper()
     delta_hours = (df["dep_dt_utc"] - df["prev_arr_dt_utc"]).dt.total_seconds() / 3600.0
-    # Cap at 48h — anything beyond is a multi-day gap, not a real aircraft turn
-    delta_hours = delta_hours.clip(upper=48.0)
+    # Clip to [0, 48]: negatives are schedule overlaps, >48h are multi-day gaps
+    delta_hours = delta_hours.clip(lower=0.0, upper=48.0)
     df["turn_time_hours"] = np.where(ok, delta_hours, np.nan)
     return df
 

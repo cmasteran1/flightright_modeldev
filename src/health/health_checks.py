@@ -269,7 +269,7 @@ _reg_num("turn_time_hours", 0, 48, "turn time (hours)")
 _reg_num("flightnum_hours_since_first_departure_today", 0, 24, "hours since first dep today")
 _reg_num("CRSDepTime", 0, 2400, "scheduled departure time (HHMM)")
 _reg_num("CRSArrTime", 0, 2400, "scheduled arrival time (HHMM)")
-_reg_num("CRSElapsedTime", 0, 1000, "scheduled elapsed time (min)")
+_reg_num("CRSElapsedTime", -200, 1000, "scheduled elapsed time (min)")  # BTS has rare negative values
 _reg_num("Distance", 0, 6000, "route distance (miles)")
 
 # --- Prior leg ---
