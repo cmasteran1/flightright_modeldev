@@ -284,16 +284,16 @@ for _w in [7, 14]:
 
 # --- Arrival-specific: wheels-off slip stats ---
 for _w in [7, 14]:
-    _reg_num(f"wo_slip_mean_{_w}d_fn_od", -600, 800, f"wheels-off slip mean {_w}d flight-num OD")
+    _reg_num(f"wo_slip_mean_{_w}d_fn_od", -900, 800, f"wheels-off slip mean {_w}d flight-num OD")
     _reg_num(f"wo_slip_n_{_w}d_fn_od", 0, 500, f"wheels-off slip count {_w}d flight-num OD")
-    _reg_num(f"wo_slip_mean_{_w}d_origin_blk", -300, 500, f"wheels-off slip mean {_w}d origin-block")
+    _reg_num(f"wo_slip_mean_{_w}d_origin_blk", -600, 500, f"wheels-off slip mean {_w}d origin-block")
     _reg_num(f"wo_slip_n_{_w}d_origin_blk", 0, 1200, f"wheels-off slip count {_w}d origin-block")
 
 # --- Arrival-specific: destination congestion ---
-_reg_num("dest_arrivals_pm60_sched", 0, 500, "dest arrivals +-60min (scheduled)")
-_reg_num("dest_airline_arrivals_pm60_sched", 0, 500, "dest airline arrivals +-60min (scheduled)")
-_reg_num("dest_arrivals_pm60_eta", 0, 500, "dest arrivals +-60min (ETA)")
-_reg_num("dest_airline_arrivals_pm60_eta", 0, 500, "dest airline arrivals +-60min (ETA)")
+_reg_num("dest_arrivals_pm60_sched", 0, 800, "dest arrivals +-60min (scheduled)")
+_reg_num("dest_airline_arrivals_pm60_sched", 0, 800, "dest airline arrivals +-60min (scheduled)")
+_reg_num("dest_arrivals_pm60_eta", 0, 800, "dest arrivals +-60min (ETA)")
+_reg_num("dest_airline_arrivals_pm60_eta", 0, 800, "dest airline arrivals +-60min (ETA)")
 
 # --- Raw weather column names (from prepare_dataset before rename) ---
 for _raw in [

@@ -151,7 +151,7 @@ def test_null_threshold_configurable():
     df = _make_good_df()
     # Make one column ~60% null
     mask = np.random.RandomState(0).random(len(df)) < 0.6
-    df.loc[mask, "turn_time_hours"] = np.nan
+    df.loc[mask, "Distance"] = np.nan
 
     # Default threshold is 0.50 => should warn
     result_default = validate_features(df, null_threshold=0.50)
