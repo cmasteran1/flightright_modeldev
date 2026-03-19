@@ -354,16 +354,20 @@ def _load_balanced_or_sample(cfg: dict, thr: int, df_train_period: pd.DataFrame)
             rel = tpl
         cand = _as_data_path(Path(rel))
 
+    used_balanced = False
     if cand is not None and cand.exists():
         log(f"[DATA] Using balanced training file thr={thr}: {cand}")
         df = pd.read_parquet(cand)
+        used_balanced = True
     else:
         log(f"[DATA] No balanced file for thr={thr}; sampling from unbalanced training period.")
         df = df_train_period.copy()
 
     df = df.dropna(subset=[ycol]).reset_index(drop=True)
 
-    if max_rows > 0 and len(df) > max_rows:
+    # Only downsample when we fell back to unbalanced data (balanced files are
+    # already sized intentionally by the feature engineering step).
+    if not used_balanced and max_rows > 0 and len(df) > max_rows:
         y = df[ycol].astype(int).values
         pos = np.where(y == 1)[0]
         neg = np.where(y == 0)[0]

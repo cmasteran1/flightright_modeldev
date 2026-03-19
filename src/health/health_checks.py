@@ -165,8 +165,6 @@ _reg_cat("od_pair", "origin-dest pair")
 _reg_cat("Origin", "origin IATA")
 _reg_cat("Dest", "destination IATA")
 _reg_cat("DepTimeBlk", "departure time block")
-_reg_cat("aircraft_type", "FAA aircraft type")
-_reg_cat("Aircraft_Age_Bucket", "aircraft age bucket")
 _reg_cat("origin_daily_weathercode", "WMO daily weather code at origin")
 _reg_cat("origin_dep_hour_weathercode", "WMO hourly weather code at dep time")
 _reg_cat("dep_dow", "day of week")
@@ -175,7 +173,6 @@ _reg_cat("sched_arr_hour", "scheduled arrival hour")
 _reg_cat("is_holiday", "holiday flag")
 _reg_cat("is_spring_break", "spring break flag")
 _reg_cat("has_recent_arrival_turn_5h", "recent arrival within 5h flag")
-_reg_cat("is_first_leg_of_day", "first leg of day for tail")
 _reg_cat("flight_month", "month of flight")
 
 # --- Origin weather (daily) ---
@@ -249,11 +246,6 @@ for _hub in ["DEN", "PHX", "BWI", "MDW", "BNA"]:
         _reg_num(f"hub_{_hub}_depdelay_mean_last{_w}", -30, 5000, f"hub {_hub} dep delay mean {_w}d")
         _reg_num(f"hub_{_hub}_lateaircraft_rate_last{_w}", 0, 1, f"hub {_hub} late-aircraft rate {_w}d")
 
-# --- Tail (aircraft) rolling stats ---
-for _w in [1, 7, 14]:
-    _reg_num(f"tail_depdelay_mean_last{_w}", -30, 5000, f"tail dep delay mean {_w}d")
-    _reg_num(f"tail_lateaircraft_rate_last{_w}", 0, 1, f"tail late-aircraft rate {_w}d")
-
 # --- Destination rolling stats ---
 for _w in [1, 7, 14]:
     _reg_num(f"dest_depdelay_mean_last{_w}", -30, 5000, f"dest dep delay mean {_w}d")
@@ -264,8 +256,6 @@ _reg_num("origin_congestion_3h_total", 0, 1000, "origin 3h congestion count")
 _reg_num("origin_airline_congestion_3h_total", 0, 1000, "origin airline 3h congestion count")
 
 # --- Temporal / scheduling ---
-_reg_num("tail_leg_num_day", 0, 20, "tail leg number in day")
-_reg_num("turn_time_hours", 0, 48, "turn time (hours)")
 _reg_num("flightnum_hours_since_first_departure_today", 0, 24, "hours since first dep today")
 _reg_num("CRSDepTime", 0, 2400, "scheduled departure time (HHMM)")
 _reg_num("CRSArrTime", 0, 2400, "scheduled arrival time (HHMM)")

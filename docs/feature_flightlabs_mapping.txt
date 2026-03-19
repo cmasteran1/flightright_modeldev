@@ -1,8 +1,9 @@
 ================================================================================
 FEATURE → FLIGHTLABS API MAPPING REFERENCE
 Flight Delay Prediction Models (Departure & Arrival)
-Last updated: 2026-03-13  (rev 3 — positional hub feature naming (hub_0_/hub_1_/...),
-             updated to v7g feature set, all-carrier history pool now enforced in code)
+Last updated: 2026-03-19  (rev 4 — removed tail/aircraft features from training:
+             aircraft_type, Aircraft_Age_Bucket, tail_depdelay_mean, tail_lateaircraft_rate,
+             tail_leg_num_day, turn_time_hours, is_first_leg_of_day)
 ================================================================================
 
 This document describes every feature used by the departure delay model (v7g)
@@ -16,28 +17,30 @@ Where used:
 
 IMPORTANT SCOPE NOTE
 --------------------
-Two categories of BTS features are NOT reproducible from FlightLabs and are
-therefore DROPPED from any live inference pipeline:
+The following categories of features have been REMOVED from training configs
+entirely (not just dropped at inference time) because they cannot be reliably
+computed from public APIs:
 
   (1) Delay cause-code features — BTS classifies delay by cause (carrier,
       NAS, weather, late-aircraft, security). FlightLabs returns only total
-      delay minutes. Figuring out the cause reliably requires data that
-      arrives days to weeks after the flight (ASPM/OOOI records, airline
-      operations logs). These features are dropped:
+      delay minutes. These features are removed from training:
         carrier_lateaircraft_rate_last1/7/14
         origin_lateaircraft_rate_last1/7/14
         origin_nas_rate_last1/7/14
         origin_weather_rate_last1/7/14
-        tail_lateaircraft_rate_last1/7/14
         dest_lateaircraft_rate_last1/7/14
-        hub_{I}_lateaircraft_rate_last{W}  (I=0..4 for WN v7g; all windows)
+        hub_{I}_lateaircraft_rate_last{W}  (I=0..4; all windows)
 
-  (2) Tail-specific delay history — tail_depdelay_mean_last1/7/14. Even
-      though past tail data could be obtained from Flight Data by Date
-      (search_by=reg), the current flight's tail assignment is not
-      deterministically knowable before departure without internal airline
-      records. These features are dropped. Turn/rotation features ARE kept
-      using the inbound-chain inference described in Section 3C.
+  (2) Tail/aircraft-specific features — tail number is not knowable before
+      departure without internal airline records. Aircraft type/age require
+      tail lookup. All removed from training:
+        tail_depdelay_mean_last1/7/14
+        tail_lateaircraft_rate_last1/7/14
+        aircraft_type
+        Aircraft_Age_Bucket
+        tail_leg_num_day
+        turn_time_hours
+        is_first_leg_of_day
 
 
 ================================================================================
@@ -129,10 +132,9 @@ DATA FLOWS ARE SEPARATED INTO THREE TIERS:
 
 TIER 1 — One-time setup (run once, refresh rarely)
   - Airport metadata: ~100 calls to Endpoint D. Cache lat/lng/timezone.
-  - ICAO→IATA aircraft type mapping: static file from OpenFlights/OurAirports,
-    no API calls. Refresh annually.
-  - FAA aircraft registry: free CSV download from faa.gov, needed only if
-    Aircraft_Age_Bucket is retained. Refresh annually.
+  - Holiday calendar: static file or Python 'holidays' package.
+    (aircraft_type and Aircraft_Age_Bucket removed — no longer need
+    ICAO→IATA mapping or FAA aircraft registry.)
 
 TIER 2 — Nightly offline batch (builds the rolling-stats database)
   For each airline served (e.g. WN):
@@ -223,29 +225,8 @@ FEATURE: DepTimeBlk [BOTH]
   FlightLabs: Derived from departure.scheduledTime — parse HH, format as
               "HH00-HH59". No extra API call needed.
 
-FEATURE: aircraft_type [BOTH]
-  What it is: IATA aircraft type code (e.g. "73H" for Boeing 737-800).
-              Different aircraft have different performance profiles,
-              maintenance schedules, and delay tendencies.
-  BTS source: BTS aircraft type from tail lookup.
-  FlightLabs: aircraft.model from Endpoint A (Flight Data by Date) gives a
-              string like "Boeing 737-800". Map this to the IATA code via a
-              static conversion table (freely available from OpenFlights).
-              Alternatively, Endpoint B returns aircraft_icao (e.g. "B738"),
-              which maps to IATA via the same table.
-
-FEATURE: Aircraft_Age_Bucket [BOTH]
-  What it is: Bucketed aircraft age in years (e.g. "0-5yr", "6-10yr",
-              "11-15yr", "16+yr"). Older aircraft have more maintenance events.
-  BTS source: Join on tail number to FAA aircraft registry for year built.
-  FlightLabs: aircraft.reg from Endpoint A gives the tail/N-number. Look up
-              year of manufacture in the FAA Aircraft Registry CSV (free
-              download from faa.gov). Compute age = current_year - mfr_year,
-              then bucket. Cache tail→age permanently (refresh annually).
-              Note: this requires knowing the tail of the current flight —
-              see Section 3C for the rotation inference strategy. If tail
-              assignment is unavailable at prediction time, default to the
-              fleet average for this aircraft type.
+FEATURE: aircraft_type — REMOVED (requires tail number lookup)
+FEATURE: Aircraft_Age_Bucket — REMOVED (requires tail number lookup)
 
 FEATURE: is_holiday [BOTH]
   What it is: Binary (0/1). Is the departure date a US federal holiday?
@@ -274,15 +255,7 @@ FEATURE: has_recent_arrival_turn_5h [BOTH]
               Mid-rotation aircraft carry delay risk from prior legs.
   FlightLabs: See Section 3C (rotation inference).
 
-FEATURE: is_first_leg_of_day [DEP]
-  What it is: Binary (0/1). Is this the first scheduled departure of this
-              flight number today? First-of-day departures are not exposed
-              to propagated delay from earlier legs.
-  FlightLabs: From Tier-3 Call 1 (Future Flights at Origin): find the
-              earliest occurrence of this carrier.flightNumber for today.
-              If this flight is at or before that time, set to 1.
-              Also cross-check against the offline cache for whether an
-              earlier departure city exists for this flight number.
+FEATURE: is_first_leg_of_day — REMOVED (requires tail number)
 
 
 ────────────────────────────────────────────────────────────────────────────────
@@ -327,78 +300,20 @@ FEATURE: sched_arr_hour [ARR]
 3C. AIRCRAFT ROTATION FEATURES (inbound-chain inference)
 ────────────────────────────────────────────────────────────────────────────────
 
-Background: These features describe how deep into its daily rotation an
-aircraft is before departing on this leg. Each additional leg introduces
-the possibility of cascaded delay from the prior one.
+Most rotation features have been REMOVED from training because they require
+tail number knowledge (see Scope Note above). The following were removed:
+  - tail_leg_num_day
+  - turn_time_hours
+  - is_first_leg_of_day
 
-KEY CONSTRAINT: The tail number (reg_number) assigned to a future or same-day
-flight is not reliably obtainable without internal airline scheduling records.
-The real-time endpoint is NOT used (it only reflects the current position of
-an aircraft already airborne; it cannot be used pre-departure to determine
-which aircraft will operate a future flight).
-
-ROTATION INFERENCE STRATEGY (schedule-only, no tail number required):
------------------------------------------------------------------------
-Southwest (and other point-to-point carriers) typically operate a simple
-turn pattern: one aircraft arrives at a station, is cleaned and boarded,
-then departs. The inbound flight that "feeds" this departure can be inferred
-from the offline arrival cache.
-
-For a target departure (carrier C, origin AP, scheduled dep_time T):
-
-  Step 1 — Find the inbound feeding flight:
-    In the offline cache for today (already fetched in the nightly Tier-2
-    pull for arrivals at AP for carrier C), find the most recent arrival
-    that satisfies:
-      arr_time ∈ [T − 4h,  T − 0.5h]
-    (At least 30 minutes before departure for a legal turn; within 4 hours
-    to be a plausible same-aircraft turn for a short-haul network.)
-    If multiple arrivals qualify, take the most recent one. Call this
-    the "inbound flight I".
-
-  Step 2 — Compute rotation features from I:
-    turn_time_hours           = T − I.arr_time  (in hours, scheduled times)
-    has_recent_arrival_turn_5h = 1 if I exists, else 0
-
-  Step 3 — Approximate leg number by tracing the chain:
-    Recursively apply Step 1 at I's origin airport (I.dep_iata) using
-    I.dep_time as the reference time, to find the flight that fed I.
-    Count the hops until no valid inbound is found (beginning of day).
-    tail_leg_num_day ≈ number of hops + 1.
-    Practical limit: trace at most 4 hops (Southwest aircraft average
-    ~6 legs/day; a 4-hop trace is sufficient for meaningful bucketing).
-    If no inbound is found in Step 1, tail_leg_num_day = 0 (first leg).
-
-  Limitations:
-    - At large hubs with many simultaneous arrivals/departures, the
-      "most recent arrival" heuristic may pick the wrong inbound. Accuracy
-      is highest at spoke airports with sparse schedules.
-    - Aircraft swaps due to maintenance or irregular ops are not captured.
-    - Accuracy degrades for hub-to-hub flights where multiple inbounds
-      arrive in close succession.
-
-FEATURE: tail_leg_num_day [BOTH]
-  What it is: Approximate number of flight segments this aircraft has
-              already flown today before this departure (0 = first flight).
-              Each additional leg adds cumulative delay exposure.
-  FlightLabs: Derived from the inbound-chain trace (Step 3 above).
-              Uses only offline Tier-2 cache data; no extra API call needed
-              at prediction time.
+The remaining rotation feature uses schedule-only inference (no tail needed):
 
 FEATURE: has_recent_arrival_turn_5h [BOTH]
   What it is: Binary. Was there a plausible inbound arrival for this aircraft
-              within the past 5 hours? If yes, it is mid-rotation and any
-              prior arrival delay propagates.
-  FlightLabs: Derived from Step 1 of inbound-chain inference.
-              Uses offline Tier-2 cache. No extra API call.
-
-FEATURE: turn_time_hours [BOTH]
-  What it is: Scheduled hours between the inferred inbound arrival and this
-              departure (e.g. 1.25 h = 75-minute turn). Shorter turns leave
-              less buffer to absorb delay. Computed from scheduled times only,
-              so it is knowable before departure.
-  FlightLabs: Derived from Step 2 of inbound-chain inference.
-              Uses offline Tier-2 cache. No extra API call.
+              within the past 5 hours? Inferred from schedule: find the most
+              recent same-carrier arrival at the origin airport within
+              [T-4h, T-0.5h]. If one exists, set to 1.
+  FlightLabs: Derived from offline Tier-2 arrival cache. No extra API call.
 
 FEATURE: flightnum_hours_since_first_departure_today [BOTH]
   What it is: Hours between this flight's scheduled departure and the
@@ -414,14 +329,8 @@ FEATURE: flightnum_hours_since_first_departure_today [BOTH]
               from a different city than Origin; the offline cache covers
               all airports for this airline, so it can be found there.
 
-FEATURE: tail_depdelay_mean_last1 / last7 / last14  ← DROPPED
-  What it is would have been: Average departure delay for this specific
-              aircraft over recent days — a chronic-maintenance signal.
-  Why dropped: The tail number of the aircraft that will operate the current
-              flight is not deterministically knowable before departure
-              without internal airline records. Even though historical tail
-              data is available via Endpoint A (search_by=reg), the mapping
-              of tail→upcoming flight cannot be made reliably in advance.
+FEATURE: tail_depdelay_mean_last1/7/14 — REMOVED (requires tail number)
+FEATURE: tail_lateaircraft_rate_last1/7/14 — REMOVED (requires tail number)
 
 
 ────────────────────────────────────────────────────────────────────────────────
@@ -612,7 +521,7 @@ only published in aggregate monthly releases:
   DROPPED: origin_nas_rate_last1/7/14
   DROPPED: origin_weather_rate_last1/7/14
   DROPPED: dest_lateaircraft_rate_last1/7/14
-  DROPPED: tail_lateaircraft_rate_last1/7/14
+  REMOVED: tail_lateaircraft_rate_last1/7/14
 
 These features carry substantial predictive signal in the BTS-trained model.
 A retraining pass that excludes them (using Endpoint-sourced data only) is
@@ -841,15 +750,19 @@ from FlightLabs or any other public pre-departure data source:
     hub_{0,1,2,3,4}_lateaircraft_rate_last{1,7,14}
       (WN v7g mapping: hub_0=DEN, hub_1=PHX, hub_2=BWI, hub_3=MDW, hub_4=BNA)
 
-  CATEGORY 2 — Tail-specific delay history (tail assignment not knowable
+  CATEGORY 2 — Tail/aircraft features (tail assignment not knowable
                pre-departure without internal records):
     tail_depdelay_mean_last1/7/14
+    tail_lateaircraft_rate_last1/7/14
+    aircraft_type
+    Aircraft_Age_Bucket
+    tail_leg_num_day
+    turn_time_hours
+    is_first_leg_of_day
 
-RECOMMENDATION: Retrain the model variants with these features excluded and
-with the remaining features sourced from FlightLabs. This ensures the model
-learns appropriate weights for the reduced feature set rather than relying on
-correlations with the dropped features. Expected AUC impact: −0.010 to −0.020
-based on typical feature importance of these columns in the BTS-trained model.
+NOTE: All features in Categories 1 and 2 have been removed from training
+configs as of v7g rev 4. Models are trained without these features so they
+learn optimal weights for the features that ARE available at inference time.
 
 
 ================================================================================
@@ -857,7 +770,7 @@ SECTION 5 — SUMMARY: CALL BUDGET PER PREDICTION
 ================================================================================
 
 TIER 1 — One-time setup (amortized to near-zero):
-  ~100 calls to Airports endpoint; static files for type mapping and FAA age.
+  ~100 calls to Airports endpoint; static files for holiday calendar.
 
 TIER 2 — Nightly batch (shared; not charged per prediction):
   ~50 airports × 2 calls (dep + arr) = 100 calls per airline per night
