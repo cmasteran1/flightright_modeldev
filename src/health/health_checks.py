@@ -18,7 +18,7 @@ import json
 import re
 from pathlib import Path
 from datetime import date, timedelta
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 
 import numpy as np
 import pandas as pd
@@ -202,32 +202,41 @@ _reg_num("dest_arr_cape", 0, 10000, "dest CAPE at arr")
 _reg_num("dest_arr_cloudcover", 0, 100, "dest cloudcover at arr")
 
 # --- Flight-number OD rolling departure delay stats ---
-# Bounds match DepDelayMinutes (0-2000) since 1-day means/medians can equal raw delay
+# Registry max bounds: hard absolute limits.  Low-support windows (1-2 obs)
+# can have mean/median equal to a single raw delay, so max must accommodate
+# extreme individual events.  The P95 magnitude check (in validate_features)
+# catches *systematic* inflation separately.
+# With low support (1-2 obs), mean/median/std can equal a raw delay.
+# BTS DepDelayMinutes goes up to ~4000+ min, so these must accommodate the tail.
+# The P95 magnitude check in validate_features catches *systematic* inflation.
+_MULTIDAY_MEAN_CAP = {1: 5000, 7: 5000, 14: 5000}
+_MULTIDAY_MEDIAN_CAP = {1: 5000, 7: 5000, 14: 5000}
+_MULTIDAY_STD_CAP = {7: 5000, 14: 5000}
 for _w in [1, 7, 14]:
-    _reg_num(f"flightnum_od_depdelay_mean_last{_w}", -30, 5000, f"flightnum OD dep delay mean {_w}d")
-    _reg_num(f"flightnum_od_depdelay_median_last{_w}", -30, 5000, f"flightnum OD dep delay median {_w}d")
+    _reg_num(f"flightnum_od_depdelay_mean_last{_w}", -30, _MULTIDAY_MEAN_CAP[_w], f"flightnum OD dep delay mean {_w}d")
+    _reg_num(f"flightnum_od_depdelay_median_last{_w}", -30, _MULTIDAY_MEDIAN_CAP[_w], f"flightnum OD dep delay median {_w}d")
     if _w >= 2:  # std_last1 dropped: undefined for single observation
-        _reg_num(f"flightnum_od_depdelay_std_last{_w}", 0, 5000, f"flightnum OD dep delay std {_w}d")
+        _reg_num(f"flightnum_od_depdelay_std_last{_w}", 0, _MULTIDAY_MEAN_CAP[_w], f"flightnum OD dep delay std {_w}d")
 _reg_num("flightnum_od_support_count_last14d", 0, 500, "flightnum OD support count 14d")
 _reg_num("flightnum_od_low_support_last14d", 0, 1, "flightnum OD low support flag")
 
 # --- Carrier rolling departure delay stats ---
 for _w in [1, 7, 14]:
-    _reg_num(f"carrier_depdelay_mean_last{_w}", -30, 5000, f"carrier dep delay mean {_w}d")
+    _reg_num(f"carrier_depdelay_mean_last{_w}", -30, _MULTIDAY_MEAN_CAP[_w], f"carrier dep delay mean {_w}d")
     if _w >= 2:
-        _reg_num(f"carrier_depdelay_std_last{_w}", 0, 5000, f"carrier dep delay std {_w}d")
+        _reg_num(f"carrier_depdelay_std_last{_w}", 0, _MULTIDAY_MEAN_CAP[_w], f"carrier dep delay std {_w}d")
 
 # --- Carrier-origin rolling departure delay stats ---
 for _w in [1, 7, 14]:
-    _reg_num(f"carrier_origin_depdelay_mean_last{_w}", -30, 5000, f"carrier-origin dep delay mean {_w}d")
+    _reg_num(f"carrier_origin_depdelay_mean_last{_w}", -30, _MULTIDAY_MEAN_CAP[_w], f"carrier-origin dep delay mean {_w}d")
     if _w >= 2:
-        _reg_num(f"carrier_origin_depdelay_std_last{_w}", 0, 5000, f"carrier-origin dep delay std {_w}d")
+        _reg_num(f"carrier_origin_depdelay_std_last{_w}", 0, _MULTIDAY_MEAN_CAP[_w], f"carrier-origin dep delay std {_w}d")
 
 # --- Origin rolling departure delay stats ---
 for _w in [1, 7, 14]:
-    _reg_num(f"origin_depdelay_mean_last{_w}", -30, 5000, f"origin dep delay mean {_w}d")
+    _reg_num(f"origin_depdelay_mean_last{_w}", -30, _MULTIDAY_MEAN_CAP[_w], f"origin dep delay mean {_w}d")
     if _w >= 2:
-        _reg_num(f"origin_depdelay_std_last{_w}", 0, 5000, f"origin dep delay std {_w}d")
+        _reg_num(f"origin_depdelay_std_last{_w}", 0, _MULTIDAY_MEAN_CAP[_w], f"origin dep delay std {_w}d")
 
 # --- Delay cause rates (origin + carrier) ---
 for _w in [1, 7, 14]:
@@ -239,16 +248,16 @@ for _w in [1, 7, 14]:
 # --- Hub spillover (indexed 0-4 and named DEN/PHX/BWI/MDW/BNA) ---
 for _h in [0, 1, 2, 3, 4]:
     for _w in [1, 7, 14]:
-        _reg_num(f"hub_{_h}_depdelay_mean_last{_w}", -30, 5000, f"hub {_h} dep delay mean {_w}d")
+        _reg_num(f"hub_{_h}_depdelay_mean_last{_w}", -30, _MULTIDAY_MEAN_CAP[_w], f"hub {_h} dep delay mean {_w}d")
         _reg_num(f"hub_{_h}_lateaircraft_rate_last{_w}", 0, 1, f"hub {_h} late-aircraft rate {_w}d")
 for _hub in ["DEN", "PHX", "BWI", "MDW", "BNA"]:
     for _w in [1, 7, 14]:
-        _reg_num(f"hub_{_hub}_depdelay_mean_last{_w}", -30, 5000, f"hub {_hub} dep delay mean {_w}d")
+        _reg_num(f"hub_{_hub}_depdelay_mean_last{_w}", -30, _MULTIDAY_MEAN_CAP[_w], f"hub {_hub} dep delay mean {_w}d")
         _reg_num(f"hub_{_hub}_lateaircraft_rate_last{_w}", 0, 1, f"hub {_hub} late-aircraft rate {_w}d")
 
 # --- Destination rolling stats ---
 for _w in [1, 7, 14]:
-    _reg_num(f"dest_depdelay_mean_last{_w}", -30, 5000, f"dest dep delay mean {_w}d")
+    _reg_num(f"dest_depdelay_mean_last{_w}", -30, _MULTIDAY_MEAN_CAP[_w], f"dest dep delay mean {_w}d")
     _reg_num(f"dest_lateaircraft_rate_last{_w}", 0, 1, f"dest late-aircraft rate {_w}d")
 
 # --- Congestion ---
@@ -264,16 +273,16 @@ _reg_num("Distance", 0, 6000, "route distance (miles)")
 
 # --- Prior leg ---
 for _w in [7, 14]:
-    _reg_num(f"prior_leg_depdelay_mean_last{_w}", -30, 5000, f"prior leg dep delay mean {_w}d")
+    _reg_num(f"prior_leg_depdelay_mean_last{_w}", -30, _MULTIDAY_MEAN_CAP[_w], f"prior leg dep delay mean {_w}d")
 
 # --- Arrival-specific: arrival delay rolling stats ---
 for _w in [7, 14]:
-    _reg_num(f"arrdelay_mean_{_w}d_fn_od", -30, 5000, f"arr delay mean {_w}d flight-num OD")
+    _reg_num(f"arrdelay_mean_{_w}d_fn_od", -30, _MULTIDAY_MEAN_CAP[_w], f"arr delay mean {_w}d flight-num OD")
     _reg_num(f"arrdelay_n_{_w}d_fn_od", 0, 500, f"arr delay count {_w}d flight-num OD")
-    _reg_num(f"arrdelay_mean_{_w}d_car_od", -30, 5000, f"arr delay mean {_w}d carrier OD")
+    _reg_num(f"arrdelay_mean_{_w}d_car_od", -30, _MULTIDAY_MEAN_CAP[_w], f"arr delay mean {_w}d carrier OD")
     _reg_num(f"arrdelay_n_{_w}d_car_od", 0, 500, f"arr delay count {_w}d carrier OD")
-_reg_num("arrdelay_median_7d_fn_od", -30, 5000, "arr delay median 7d flight-num OD")
-_reg_num("arrdelay_median_7d_car_od", -30, 5000, "arr delay median 7d carrier OD")
+_reg_num("arrdelay_median_7d_fn_od", -30, _MULTIDAY_MEDIAN_CAP[7], "arr delay median 7d flight-num OD")
+_reg_num("arrdelay_median_7d_car_od", -30, _MULTIDAY_MEDIAN_CAP[7], "arr delay median 7d carrier OD")
 
 # --- Arrival-specific: airtime rolling stats ---
 for _w in [7, 14]:
@@ -412,6 +421,63 @@ def validate_features(
                     result.warn(f"cat_{col}", "all null")
                 else:
                     result.ok(f"cat_{col}", f"{n_unique} unique, {null_pct:.0%} null")
+
+    # --- multi-day mean/median magnitude sanity (P95 check) ---
+    # Multi-day DELAY averages should be much smaller than single-event extremes.
+    # A 7-day mean above ~120 min or median above ~60 min is very suspicious
+    # and likely indicates a computation bug (e.g. summing instead of averaging).
+    # Only applies to delay features — airtime, wo_slip, etc. have different scales.
+    _MULTIDAY_P95_LIMITS: Dict[str, Tuple[float, float]] = {
+        # pattern substring -> (p95_warn_mean, p95_warn_median)
+        "last7":  (120.0, 60.0),
+        "last14": (100.0, 45.0),
+        "_7d_":   (120.0, 60.0),
+        "_14d_":  (100.0, 45.0),
+    }
+    # Features whose scale is NOT delay minutes — exempt from magnitude check
+    _MAGNITUDE_EXEMPT_PREFIXES = ("airtime_", "wo_slip_")
+    multiday_issues = []
+    multiday_checked = 0
+    for col in df.columns:
+        if col not in _FEATURE_REGISTRY:
+            continue
+        spec = _FEATURE_REGISTRY[col]
+        if spec["type"] != "num":
+            continue
+        # Skip non-delay features (airtime, wheels-off slip have different scales)
+        if any(col.startswith(pfx) for pfx in _MAGNITUDE_EXEMPT_PREFIXES):
+            continue
+        # Identify multi-day mean/median features by name patterns
+        is_mean = "mean" in col and "mean_last1" not in col
+        is_median = "median" in col and "median_last1" not in col
+        if not (is_mean or is_median):
+            continue
+        # Find which window pattern matches
+        matched_key = None
+        for key in _MULTIDAY_P95_LIMITS:
+            if key in col:
+                matched_key = key
+                break
+        if matched_key is None:
+            continue
+        s = pd.to_numeric(df[col], errors="coerce").dropna()
+        if len(s) < 20:
+            continue  # not enough data to compute meaningful percentile
+        multiday_checked += 1
+        p95 = float(s.quantile(0.95))
+        mean_limit, median_limit = _MULTIDAY_P95_LIMITS[matched_key]
+        limit = median_limit if is_median else mean_limit
+        if p95 > limit:
+            multiday_issues.append(f"{col} P95={p95:.1f}>{limit:.0f}")
+
+    if multiday_issues:
+        result.warn(
+            "multiday_magnitude",
+            f"{len(multiday_issues)} multi-day delay feature(s) with high P95: "
+            + ", ".join(multiday_issues[:5]),
+        )
+    elif multiday_checked > 0:
+        result.ok("multiday_magnitude", f"{multiday_checked} multi-day delay mean/median features have reasonable P95")
 
     # --- holiday spot-check ---
     if "is_holiday" in df.columns and "FlightDate" in df.columns:

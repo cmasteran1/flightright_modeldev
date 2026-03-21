@@ -1,0 +1,73 @@
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# ── Virtual environments ───────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── Data files (large — live in flightrightdata/ sibling, not this repo) ──────
+*.parquet
+*.arrow
+*.feather
+*.h5
+*.hdf5
+*.csv.gz
+*.pkl
+*.pickle
+
+# ── Trained model artifacts ───────────────────────────────────────────────────
+*.cbm
+*.joblib
+catboost_info/
+
+# ── Training / prepare logs ───────────────────────────────────────────────────
+data/*.log
+*.log
+
+# ── Weather cache (fetched from Open-Meteo, re-creatable) ────────────────────
+weather_cache/
+weather_cache_hourly/
+weather_cache_dest/
+weather_cache_dest_hourly/
+
+# ── IDE / Editor ──────────────────────────────────────────────────────────────
+.spyproject/
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+
+# ── Claude Code ───────────────────────────────────────────────────────────────
+.claude/
+
+# ── OS artifacts ──────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# ── Jupyter ───────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ── Environment / secrets ─────────────────────────────────────────────────────
+.env
+.env.*
+secrets.json
+credentials.json

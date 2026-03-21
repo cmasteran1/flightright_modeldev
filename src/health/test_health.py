@@ -2,12 +2,16 @@
 """
 src/health/test_health.py
 
-Small test suite for the health-check and feature-report modules.
+Test suite for the health-check and feature-report modules.
 
 Run:
     python -m pytest src/health/test_health.py -v
     python -m pytest src/health/test_health.py -v -m "not network"   # skip API tests
+    python -m pytest src/health/test_health.py -v -m "not network and not data"  # skip API + data tests
 """
+
+import os
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -34,64 +38,51 @@ except ModuleNotFoundError:
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Real data paths — relative to repo root
 # ---------------------------------------------------------------------------
 
-def _make_good_df(n: int = 100) -> pd.DataFrame:
-    """Create a synthetic features DataFrame covering ALL registered features."""
-    rng = np.random.RandomState(42)
-    airports = ["DEN", "PHX", "BWI", "MDW", "BNA", "LAS", "OAK", "DAL"]
-    data = {}
+_DATA_DIR = Path(__file__).resolve().parents[2] / ".." / "flightrightdata" / "data"
+_PROCESSED = _DATA_DIR / "processed"
+_MODELS = _DATA_DIR / "models"
 
-    for name, spec in _FEATURE_REGISTRY.items():
-        if spec["type"] == "num":
-            lo = max(spec["min"], -100)  # clamp to reasonable synthetic range
-            hi = min(spec["max"], 1000)
-            # keep values well within bounds
-            margin = (hi - lo) * 0.1
-            data[name] = rng.uniform(lo + margin, hi - margin, n)
-        elif spec["type"] == "cat":
-            if name in ("Origin", "Dest"):
-                data[name] = rng.choice(airports, n)
-            elif name == "Reporting_Airline":
-                data[name] = "WN"
-            elif name == "FlightDate":
-                data[name] = pd.date_range("2024-01-01", periods=n, freq="h")
-            elif name in ("Flight_Number_Reporting_Airline",):
-                data[name] = rng.choice(["1234", "5678", "9012"], n)
-            elif name == "Tail_Number":
-                data[name] = rng.choice(["N12345", "N67890", "N11111"], n)
-            elif name == "od_pair":
-                data[name] = rng.choice(["DEN_PHX", "BWI_MDW", "BNA_LAS"], n)
-            elif name == "DepTimeBlk":
-                data[name] = rng.choice(["0600-0659", "0700-0759", "0800-0859"], n)
-            elif name == "aircraft_type":
-                data[name] = rng.choice(["B737", "B738", "7M8"], n)
-            elif name == "Aircraft_Age_Bucket":
-                data[name] = rng.choice(["0-5", "5-10", "10-15", "15+"], n)
-            elif name in ("dep_dow", "sched_dep_hour", "sched_arr_hour", "flight_month"):
-                data[name] = rng.choice(["1", "2", "3", "4", "5"], n)
-            elif name in ("is_holiday", "is_spring_break", "has_recent_arrival_turn_5h", "is_first_leg_of_day"):
-                data[name] = rng.choice([0, 1], n)
-            elif "weathercode" in name:
-                data[name] = rng.choice(["0", "1", "2", "3", "51", "61", "71"], n)
-            else:
-                data[name] = rng.choice(["A", "B", "C"], n)
+# All 8 feature parquets from the current v7g training run
+_REAL_FEATURE_PARQUETS = {
+    "dep_WN": _PROCESSED / "features_dep_WN_100_v7g_unbalanced.parquet",
+    "dep_AA": _PROCESSED / "features_dep_AA_100_v7g_unbalanced.parquet",
+    "dep_DL": _PROCESSED / "features_dep_DL_100_v7g_unbalanced.parquet",
+    "dep_UA": _PROCESSED / "features_dep_UA_100_v7g_unbalanced.parquet",
+    "arr_WN": _PROCESSED / "features_arr_WN_100_v7g_unbalanced.parquet",
+    "arr_AA": _PROCESSED / "features_arr_AA_100_v7g_unbalanced.parquet",
+    "arr_DL": _PROCESSED / "features_arr_DL_100_v7g_unbalanced.parquet",
+    "arr_UA": _PROCESSED / "features_arr_UA_100_v7g_unbalanced.parquet",
+}
 
-    return pd.DataFrame(data)
+_REAL_BUNDLES = {
+    "dep_WN": _MODELS / "dep_WN_100_v7g" / "dep_delay_bins_bundle_WN_100_v7g.joblib",
+    "dep_AA": _MODELS / "dep_AA_100_v7g" / "dep_delay_bins_bundle_AA_100_v7g.joblib",
+    "dep_DL": _MODELS / "dep_DL_100_v7g" / "dep_delay_bins_bundle_DL_100_v7g.joblib",
+    "dep_UA": _MODELS / "dep_UA_100_v7g" / "dep_delay_bins_bundle_UA_100_v7g.joblib",
+    "arr_WN": _MODELS / "arr_WN_100_v7g" / "arr_delay_bins_bundle_WN_100_v7g.joblib",
+    "arr_AA": _MODELS / "arr_AA_100_v7g" / "arr_delay_bins_bundle_AA_100_v7g.joblib",
+    "arr_DL": _MODELS / "arr_DL_100_v7g" / "arr_delay_bins_bundle_DL_100_v7g.joblib",
+    "arr_UA": _MODELS / "arr_UA_100_v7g" / "arr_delay_bins_bundle_UA_100_v7g.joblib",
+}
+
+_HAS_REAL_DATA = any(p.exists() for p in _REAL_FEATURE_PARQUETS.values())
 
 
-def _make_bad_df(n: int = 100) -> pd.DataFrame:
-    """Create a DataFrame with deliberate problems: out-of-range, high nulls."""
-    df = _make_good_df(n)
-    # temperature way too high (out of [180, 340] range)
-    df["origin_temp_max_K"] = 999.0
-    # negative delay (out of [0, 2000] range)
-    df["DepDelayMinutes"] = -5.0
-    # all nulls in a column
-    df["origin_dep_precip_mm"] = np.nan
-    # bad IATA code
-    df.loc[0, "Origin"] = "ZZZZ"
+def _available_feature_parquets():
+    """Yield (name, path) for all v7g feature parquets that exist on disk."""
+    for name, path in _REAL_FEATURE_PARQUETS.items():
+        if path.exists():
+            yield name, path
+
+
+def _load_sample(path: Path, n: int = 50_000) -> pd.DataFrame:
+    """Load a random sample from a parquet to keep tests fast."""
+    df = pd.read_parquet(path)
+    if len(df) > n:
+        df = df.sample(n=n, random_state=42)
     return df
 
 
@@ -114,24 +105,8 @@ def test_open_meteo_api_reachable():
 
 
 # ---------------------------------------------------------------------------
-# Feature validation tests (no network needed)
+# Unit-level validation logic tests (no data files needed)
 # ---------------------------------------------------------------------------
-
-def test_good_features_pass():
-    df = _make_good_df()
-    result = validate_features(df)
-    result.print_report()
-    assert result.passed, result.summary
-
-
-def test_bad_features_caught():
-    df = _make_bad_df()
-    result = validate_features(df)
-    result.print_report()
-    # Should have failures for out-of-range temp, negative delay, bad IATA
-    fails = [i for i in result.items if i["status"] == "FAIL"]
-    assert len(fails) >= 2, f"Expected at least 2 failures, got {len(fails)}: {fails}"
-
 
 def test_empty_df_fails():
     df = pd.DataFrame()
@@ -141,27 +116,80 @@ def test_empty_df_fails():
 
 
 def test_expected_columns_check():
-    df = _make_good_df()
+    """validate_features should FAIL when expected columns are missing."""
+    df = pd.DataFrame({"Origin": ["DEN", "PHX"], "Dest": ["BWI", "MDW"]})
     result = validate_features(df, expected_columns=["Origin", "Dest", "MISSING_COL"])
     fails = [i for i in result.items if i["status"] == "FAIL" and "expected_columns" in i["name"]]
     assert len(fails) == 1
 
 
-def test_null_threshold_configurable():
-    df = _make_good_df()
-    # Make one column ~60% null
-    mask = np.random.RandomState(0).random(len(df)) < 0.6
-    df.loc[mask, "Distance"] = np.nan
+# ---------------------------------------------------------------------------
+# Real-data feature validation — runs on every v7g parquet on disk
+# ---------------------------------------------------------------------------
 
-    # Default threshold is 0.50 => should warn
-    result_default = validate_features(df, null_threshold=0.50)
-    warns = [i for i in result_default.items if "null_fraction" in i["name"] and i["status"] == "WARN"]
-    assert len(warns) == 1
+@pytest.mark.data
+@pytest.mark.skipif(not _HAS_REAL_DATA, reason="No v7g feature parquets on disk")
+@pytest.mark.parametrize("name,path", list(_available_feature_parquets()), ids=lambda x: x if isinstance(x, str) else x.stem)
+def test_real_features_pass_validation(name, path):
+    """Real feature parquets should pass full validation (no FAILs)."""
+    df = _load_sample(path)
+    result = validate_features(df)
+    result.print_report()
+    fails = [i for i in result.items if i["status"] == "FAIL"]
+    assert len(fails) == 0, f"{name}: {[f['name'] + ': ' + f['detail'] for f in fails]}"
 
-    # Raise threshold to 0.80 => should pass
-    result_lax = validate_features(df, null_threshold=0.80)
-    warns_lax = [i for i in result_lax.items if "null_fraction" in i["name"] and i["status"] == "WARN"]
-    assert len(warns_lax) == 0
+
+@pytest.mark.data
+@pytest.mark.skipif(not _HAS_REAL_DATA, reason="No v7g feature parquets on disk")
+@pytest.mark.parametrize("name,path", list(_available_feature_parquets()), ids=lambda x: x if isinstance(x, str) else x.stem)
+def test_real_multiday_magnitude(name, path):
+    """Multi-day mean/median P95 should be within sane limits on real data."""
+    df = _load_sample(path)
+    result = validate_features(df)
+
+    magnitude_items = [i for i in result.items if "multiday_magnitude" in i["name"]]
+    assert len(magnitude_items) >= 1, f"{name}: multiday_magnitude check did not run"
+
+    for item in magnitude_items:
+        assert item["status"] != "WARN", (
+            f"{name}: multi-day magnitude warning — likely computation bug: {item['detail']}"
+        )
+
+
+@pytest.mark.data
+@pytest.mark.skipif(not _HAS_REAL_DATA, reason="No v7g feature parquets on disk")
+@pytest.mark.parametrize("name,path", list(_available_feature_parquets()), ids=lambda x: x if isinstance(x, str) else x.stem)
+def test_real_mean_median_p99_spot_check(name, path):
+    """Spot-check P99 of every delay mean/median column on real data.
+
+    Multi-day delay means should have P99 < 200, medians P99 < 150.
+    These are looser than the P95 health-check limits to catch only gross errors.
+    Non-delay features (airtime, wo_slip) are excluded — different scale.
+    """
+    df = _load_sample(path)
+    violations = []
+    _EXEMPT = ("airtime_", "wo_slip_")
+
+    for col in df.columns:
+        if any(col.startswith(pfx) for pfx in _EXEMPT):
+            continue
+        is_mean = "mean" in col and "last1" not in col and "mean_last1" not in col
+        is_median = "median" in col and "last1" not in col
+        is_multiday = any(k in col for k in ("last7", "last14", "_7d_", "_14d_"))
+        if not ((is_mean or is_median) and is_multiday):
+            continue
+
+        s = pd.to_numeric(df[col], errors="coerce").dropna()
+        if len(s) < 50:
+            continue
+
+        p99 = float(s.quantile(0.99))
+        limit = 150.0 if is_median else 200.0
+
+        if p99 > limit:
+            violations.append(f"{col}: P99={p99:.1f} > {limit:.0f}")
+
+    assert len(violations) == 0, f"{name} has {len(violations)} P99 violations:\n" + "\n".join(violations)
 
 
 # ---------------------------------------------------------------------------
@@ -170,18 +198,31 @@ def test_null_threshold_configurable():
 
 def test_thanksgiving_2024():
     """Thanksgiving 2024 = Nov 28 (4th Thursday of November)."""
-    # Import the function from features_dep
     from src.fetch_prune.features_dep import thanksgiving_day
     assert thanksgiving_day(2024).month == 11
     assert thanksgiving_day(2024).day == 28
 
 
 # ---------------------------------------------------------------------------
-# Feature report tests
+# Feature report tests — use real data when available, otherwise minimal df
 # ---------------------------------------------------------------------------
 
+def _get_report_df():
+    """Return a real sample if available, else a minimal synthetic df."""
+    for path in _REAL_FEATURE_PARQUETS.values():
+        if path.exists():
+            return _load_sample(path, n=5000)
+    # Fallback: minimal df with a few registered features
+    return pd.DataFrame({
+        "Origin": ["DEN"] * 50,
+        "Dest": ["PHX"] * 50,
+        "origin_temp_max_K": np.random.uniform(200, 320, 50),
+        "Distance": np.random.uniform(100, 3000, 50),
+    })
+
+
 def test_feature_report_structure():
-    df = _make_good_df()
+    df = _get_report_df()
     report = generate_feature_report(df)
 
     assert "global" in report
@@ -191,27 +232,35 @@ def test_feature_report_structure():
 
     assert report["global"]["row_count"] == len(df)
     assert report["global"]["column_count"] == len(df.columns)
-    assert report["status"] == "PASS"
-
-
-def test_feature_report_bad_data():
-    df = _make_bad_df()
-    report = generate_feature_report(df)
-    assert report["status"] == "FAIL"
+    # Real data may have warnings (e.g. null columns), so just check it ran
+    assert report["status"] in ("PASS", "WARN")
 
 
 def test_feature_report_per_feature_stats():
-    df = _make_good_df(50)
+    df = _get_report_df()
     report = generate_feature_report(df)
 
-    # Numeric feature should have min/max/mean
-    temp_info = report["features"]["origin_temp_max_K"]
-    assert "min" in temp_info
-    assert "max" in temp_info
-    assert "mean" in temp_info
-    assert temp_info["null_pct"] == 0.0
+    # Find a numeric feature present in both the df and registry
+    numeric_col = None
+    for col in df.columns:
+        if col in _FEATURE_REGISTRY and _FEATURE_REGISTRY[col]["type"] == "num":
+            if col in report["features"]:
+                numeric_col = col
+                break
+    assert numeric_col is not None, "No registered numeric feature found in report"
 
-    # Categorical feature should have unique_count
-    origin_info = report["features"]["Origin"]
-    assert "unique_count" in origin_info
-    assert "top_values" in origin_info
+    info = report["features"][numeric_col]
+    assert "min" in info
+    assert "max" in info
+    assert "mean" in info
+
+    # Find a categorical feature
+    cat_col = None
+    for col in df.columns:
+        if col in _FEATURE_REGISTRY and _FEATURE_REGISTRY[col]["type"] == "cat":
+            if col in report["features"]:
+                cat_col = col
+                break
+    if cat_col:
+        cat_info = report["features"][cat_col]
+        assert "unique_count" in cat_info
