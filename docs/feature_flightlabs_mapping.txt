@@ -16,9 +16,9 @@ Where used:
 
 IMPORTANT SCOPE NOTE
 --------------------
-The following categories of features have been REMOVED from training configs
-entirely (not just dropped at inference time) because they cannot be reliably
-computed from public APIs:
+The following categories of features have been REMOVED from v8 training
+configs (both departure and arrival) because they cannot be reliably
+computed from public APIs or are not knowable before departure:
 
   (1) Delay cause-code features — BTS classifies delay by cause (carrier,
       NAS, weather, late-aircraft, security). FlightLabs returns only total
@@ -32,7 +32,7 @@ computed from public APIs:
 
   (2) Tail/aircraft-specific features — tail number is not knowable before
       departure without internal airline records. Aircraft type/age require
-      tail lookup. All removed from training:
+      tail lookup. All removed from BOTH dep and arr training configs in v8:
         tail_depdelay_mean_last1/7/14
         tail_lateaircraft_rate_last1/7/14
         aircraft_type
@@ -40,6 +40,14 @@ computed from public APIs:
         tail_leg_num_day
         turn_time_hours
         is_first_leg_of_day
+
+  (3) Low-importance features dropped in v8 per SHAP analysis (see
+      v8 ANALYST-RECOMMENDED FEATURES section below):
+        Reporting_Airline, is_holiday, dest_depdelay_mean_last7/14,
+        origin_daily_windspeed_max_kmh, origin_depdelay_mean_last1/7,
+        origin_dep_windspeed_kmh, flightnum_od_low_support_last14d,
+        origin_lateaircraft_rate_last14, carrier_depdelay_mean_last14,
+        carrier_lateaircraft_rate_last14
 
 
 ================================================================================
