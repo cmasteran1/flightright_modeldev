@@ -28,7 +28,8 @@
     "dest_daily":       false,
     "dest_hourly_at_arr": false,
     "cache_dir":        "../flightrightdata/weather_cache",
-    "hourly_cache_dir": "../flightrightdata/weather_cache_hourly"
+    "hourly_cache_dir": "../flightrightdata/weather_cache_hourly",
+    "historical_cache_dir": "../flightrightdata/weather_cache_historical"
   },
 
   "strike": {

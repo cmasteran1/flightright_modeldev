@@ -486,6 +486,84 @@ def _weather_cache_path(
     return cache_dir / f"{airport}_{start}_{end}_{safe_tz}_{granularity}_{safe_prefix}.parquet"
 
 
+def _load_from_historical_cache(
+    historical_dir: Path,
+    airport: str,
+    start: str,
+    end: str,
+    tz: str,
+    granularity: str,
+) -> Optional[pd.DataFrame]:
+    """
+    Search the historical weather cache for parquet files covering the needed
+    date range.  Historical files are in ~90-day chunks named:
+      {airport}_{chunk_start}_{chunk_end}_{tz}_{granularity}_historical.parquet
+
+    Returns a concatenated DataFrame covering [start, end], or None if no
+    coverage found.
+    """
+    if not historical_dir.exists():
+        return None
+
+    safe_tz = tz.replace("/", "__")
+    pattern = f"{airport}_*_{safe_tz}_{granularity}_historical.parquet"
+    matches = sorted(historical_dir.glob(pattern))
+    if not matches:
+        return None
+
+    need_start = pd.Timestamp(start)
+    need_end = pd.Timestamp(end)
+
+    frames = []
+    for p in matches:
+        # Parse chunk date range from filename:
+        # {airport}_{start}_{end}_{tz}_{granularity}_historical.parquet
+        stem = p.stem  # without .parquet
+        parts = stem.split("_")
+        # airport might have digits but is always 3 chars; dates are YYYY-MM-DD
+        # Find date parts by looking for YYYY-MM-DD patterns
+        try:
+            # After airport code, next two date-like tokens are start and end
+            date_parts = [p for p in parts if len(p) == 10 and p[4] == "-" and p[7] == "-"]
+            if len(date_parts) < 2:
+                continue
+            chunk_start = pd.Timestamp(date_parts[0])
+            chunk_end = pd.Timestamp(date_parts[1])
+        except (ValueError, IndexError):
+            continue
+
+        # Check overlap: chunk intersects [need_start, need_end]
+        if chunk_end < need_start or chunk_start > need_end:
+            continue
+
+        try:
+            df = pd.read_parquet(p)
+            frames.append(df)
+        except Exception:
+            continue
+
+    if not frames:
+        return None
+
+    merged = pd.concat(frames, ignore_index=True)
+
+    # Filter to needed date range
+    if granularity == "daily" and "FlightDate" in merged.columns:
+        merged["FlightDate"] = pd.to_datetime(merged["FlightDate"], errors="coerce")
+        merged = merged[(merged["FlightDate"] >= need_start) & (merged["FlightDate"] <= need_end)]
+    elif granularity == "hourly" and "time" in merged.columns:
+        merged["time"] = pd.to_datetime(merged["time"], errors="coerce")
+        merged = merged[(merged["time"] >= need_start) & (merged["time"] <= need_end + pd.Timedelta(days=1))]
+
+    # Deduplicate
+    merged = merged.drop_duplicates()
+
+    if merged.empty:
+        return None
+
+    return merged
+
+
 def _sleep_before_open_meteo_request():
     last = _OPEN_METEO_STATE["last_request_monotonic"]
     if last is None:
@@ -882,12 +960,14 @@ def add_strike_status(df: pd.DataFrame, strike_cache_path: str) -> pd.DataFrame:
     return df
 
 
-def add_origin_weather_daily(df, airports_meta: Dict[str, Tuple[float, float, str]], cache_dir: str):
+def add_origin_weather_daily(df, airports_meta: Dict[str, Tuple[float, float, str]], cache_dir: str,
+                             historical_cache_dir: Optional[str] = None):
     df = df.copy()
     df["FlightDate"] = pd.to_datetime(df["FlightDate"], errors="coerce")
 
     cache_dir = _abspath(cache_dir, base="data")
     cache_dir.mkdir(parents=True, exist_ok=True)
+    hist_dir = _abspath(historical_cache_dir, base="data") if historical_cache_dir else None
 
     start = df["FlightDate"].min().strftime("%Y-%m-%d")
     end = df["FlightDate"].max().strftime("%Y-%m-%d")
@@ -908,6 +988,18 @@ def add_origin_weather_daily(df, airports_meta: Dict[str, Tuple[float, float, st
             ow["Origin"] = ap
             ow = ow.rename(columns={c: f"origin_{c}" for c in DAILY_WEATHER_VARS})
             frames.append(ow[["FlightDate", "Origin"] + [f"origin_{c}" for c in DAILY_WEATHER_VARS]])
+        elif hist_dir:
+            hx = _load_from_historical_cache(hist_dir, ap, start, end, tz, "daily")
+            if hx is not None:
+                hx = _normalize_weather_columns(hx)
+                hx["Origin"] = ap
+                hx = hx.rename(columns={c: f"origin_{c}" for c in DAILY_WEATHER_VARS if c in hx.columns})
+                keep = [c for c in ["FlightDate", "Origin"] + [f"origin_{c}" for c in DAILY_WEATHER_VARS] if c in hx.columns]
+                frames.append(hx[keep])
+                # Write to primary cache for future runs
+                hx.to_parquet(cache_paths[ap], index=False)
+            else:
+                missing.append(ap)
         else:
             missing.append(ap)
 
@@ -935,7 +1027,8 @@ def add_origin_weather_daily(df, airports_meta: Dict[str, Tuple[float, float, st
     return df
 
 
-def add_dest_weather_daily(df, airports_meta: Dict[str, Tuple[float, float, str]], cache_dir: str):
+def add_dest_weather_daily(df, airports_meta: Dict[str, Tuple[float, float, str]], cache_dir: str,
+                           historical_cache_dir: Optional[str] = None):
     """
     Adds daily weather for DESTINATION airport, keyed on (FlightDate, Dest).
     Uses Open-Meteo ARCHIVE (actual weather). Columns prefixed with dest_*
@@ -945,6 +1038,7 @@ def add_dest_weather_daily(df, airports_meta: Dict[str, Tuple[float, float, str]
 
     cache_dir = _abspath(cache_dir, base="data")
     cache_dir.mkdir(parents=True, exist_ok=True)
+    hist_dir = _abspath(historical_cache_dir, base="data") if historical_cache_dir else None
 
     start = df["FlightDate"].min().strftime("%Y-%m-%d")
     end = df["FlightDate"].max().strftime("%Y-%m-%d")
@@ -965,6 +1059,17 @@ def add_dest_weather_daily(df, airports_meta: Dict[str, Tuple[float, float, str]
             dw["Dest"] = ap
             dw = dw.rename(columns={c: f"dest_{c}" for c in DAILY_WEATHER_VARS})
             frames.append(dw[["FlightDate", "Dest"] + [f"dest_{c}" for c in DAILY_WEATHER_VARS]])
+        elif hist_dir:
+            hx = _load_from_historical_cache(hist_dir, ap, start, end, tz, "daily")
+            if hx is not None:
+                hx = _normalize_weather_columns(hx)
+                hx["Dest"] = ap
+                hx = hx.rename(columns={c: f"dest_{c}" for c in DAILY_WEATHER_VARS if c in hx.columns})
+                keep = [c for c in ["FlightDate", "Dest"] + [f"dest_{c}" for c in DAILY_WEATHER_VARS] if c in hx.columns]
+                frames.append(hx[keep])
+                hx.to_parquet(cache_paths[ap], index=False)
+            else:
+                missing.append(ap)
         else:
             missing.append(ap)
 
@@ -1012,6 +1117,30 @@ _HOURLY_FORECAST_ONLY_VARS = [
 
 # Union: used for column scaffolding and cache schema
 HOURLY_WEATHER_VARS = _HOURLY_ARCHIVE_VARS + _HOURLY_FORECAST_ONLY_VARS
+
+
+def _hourly_df_from_historical(hx: pd.DataFrame, *, tz: str, prefix: str) -> pd.DataFrame:
+    """
+    Convert historical cache hourly DataFrame (with 'time' column in local tz
+    and raw weather var columns) to the pipeline's expected format with
+    'hour_utc' and prefixed columns.
+    """
+    h = hx.copy()
+    if "time" not in h.columns:
+        cols = ["hour_utc"] + [f"{prefix}{v}" for v in HOURLY_WEATHER_VARS]
+        return pd.DataFrame(columns=cols)
+
+    t_local = pd.to_datetime(h["time"], errors="coerce")
+    t_local = t_local.dt.tz_localize(tz, ambiguous="NaT", nonexistent="shift_forward")
+    valid = t_local.dropna()
+
+    hour_utc = valid.dt.tz_convert("UTC").dt.floor("h").dt.tz_localize(None)
+
+    out = pd.DataFrame({"hour_utc": hour_utc})
+    for v in HOURLY_WEATHER_VARS:
+        out[f"{prefix}{v}"] = pd.to_numeric(h.loc[valid.index].get(v), errors="coerce").values
+
+    return out.dropna(subset=["hour_utc"]).drop_duplicates(subset=["hour_utc"]).reset_index(drop=True)
 
 
 def _hourly_df_from_payload(payload: dict, *, tz: str, prefix: str) -> pd.DataFrame:
@@ -1086,7 +1215,8 @@ def _fetch_hourly_weather(lat, lon, start, end, tz, *, prefix: str):
     return wx
 
 
-def add_origin_weather_hourly_at_dep(df, airports_meta: Dict[str, Tuple[float, float, str]], cache_dir: str):
+def add_origin_weather_hourly_at_dep(df, airports_meta: Dict[str, Tuple[float, float, str]], cache_dir: str,
+                                     historical_cache_dir: Optional[str] = None):
     df = df.copy()
     df["FlightDate"] = pd.to_datetime(df["FlightDate"], errors="coerce")
     if "dep_dt_local" not in df.columns:
@@ -1097,6 +1227,7 @@ def add_origin_weather_hourly_at_dep(df, airports_meta: Dict[str, Tuple[float, f
 
     cache_dir = _abspath(cache_dir, base="data")
     cache_dir.mkdir(parents=True, exist_ok=True)
+    hist_dir = _abspath(historical_cache_dir, base="data") if historical_cache_dir else None
 
     start = df["FlightDate"].min().strftime("%Y-%m-%d")
     end = df["FlightDate"].max().strftime("%Y-%m-%d")
@@ -1123,6 +1254,17 @@ def add_origin_weather_hourly_at_dep(df, airports_meta: Dict[str, Tuple[float, f
             wx = _normalize_weather_columns(wx)
             wx["Origin"] = ap
             frames.append(wx)
+        elif hist_dir:
+            hx = _load_from_historical_cache(hist_dir, ap, start, end, tz, "hourly")
+            if hx is not None:
+                hx = _normalize_weather_columns(hx)
+                # Convert historical hourly to the format expected by the pipeline
+                hx = _hourly_df_from_historical(hx, tz=tz, prefix="origin_dep_")
+                hx.to_parquet(cache_paths[ap], index=False)
+                hx["Origin"] = ap
+                frames.append(hx)
+            else:
+                missing.append(ap)
         else:
             missing.append(ap)
 
@@ -1187,7 +1329,8 @@ def add_origin_weather_hourly_at_dep(df, airports_meta: Dict[str, Tuple[float, f
     return df
 
 
-def add_dest_weather_hourly_at_arr(df, airports_meta: Dict[str, Tuple[float, float, str]], cache_dir: str):
+def add_dest_weather_hourly_at_arr(df, airports_meta: Dict[str, Tuple[float, float, str]], cache_dir: str,
+                                   historical_cache_dir: Optional[str] = None):
     """
     Adds destination hourly weather at *scheduled arrival time* (arr_dt_local).
     Uses Open-Meteo ARCHIVE (actual weather).
@@ -1202,6 +1345,7 @@ def add_dest_weather_hourly_at_arr(df, airports_meta: Dict[str, Tuple[float, flo
 
     cache_dir = _abspath(cache_dir, base="data")
     cache_dir.mkdir(parents=True, exist_ok=True)
+    hist_dir = _abspath(historical_cache_dir, base="data") if historical_cache_dir else None
 
     start = df["FlightDate"].min().strftime("%Y-%m-%d")
     end = df["FlightDate"].max().strftime("%Y-%m-%d")
@@ -1228,6 +1372,16 @@ def add_dest_weather_hourly_at_arr(df, airports_meta: Dict[str, Tuple[float, flo
             wx = _normalize_weather_columns(wx)
             wx["Dest"] = ap
             frames.append(wx)
+        elif hist_dir:
+            hx = _load_from_historical_cache(hist_dir, ap, start, end, tz, "hourly")
+            if hx is not None:
+                hx = _normalize_weather_columns(hx)
+                hx = _hourly_df_from_historical(hx, tz=tz, prefix="dest_arr_")
+                hx.to_parquet(cache_paths[ap], index=False)
+                hx["Dest"] = ap
+                frames.append(hx)
+            else:
+                missing.append(ap)
         else:
             missing.append(ap)
 
@@ -1659,22 +1813,29 @@ def main():
         df = add_aircraft_age(df, reg_csv=cfg.get("aircraft_registry_csv", "data/aircraft_registry_clean.csv"))
 
     weather_cfg = cfg.get("weather") or {}
+    hist_cache = weather_cfg.get("historical_cache_dir")
+    if hist_cache:
+        print(f"[INFO] Historical weather fallback cache: {hist_cache}")
 
     if bool(weather_cfg.get("daily", True)):
         cache_dir = weather_cfg.get("cache_dir", "weather_cache")
-        df = add_origin_weather_daily(df, airports_meta=airports_meta, cache_dir=cache_dir)
+        df = add_origin_weather_daily(df, airports_meta=airports_meta, cache_dir=cache_dir,
+                                      historical_cache_dir=hist_cache)
 
         if bool(weather_cfg.get("dest_daily", True)):
             dest_cache_dir = weather_cfg.get("dest_cache_dir", cache_dir)
-            df = add_dest_weather_daily(df, airports_meta=airports_meta, cache_dir=dest_cache_dir)
+            df = add_dest_weather_daily(df, airports_meta=airports_meta, cache_dir=dest_cache_dir,
+                                        historical_cache_dir=hist_cache)
 
     if bool(weather_cfg.get("hourly_at_dep", True)):
         hourly_cache_dir = weather_cfg.get("hourly_cache_dir", "weather_cache_hourly")
-        df = add_origin_weather_hourly_at_dep(df, airports_meta=airports_meta, cache_dir=hourly_cache_dir)
+        df = add_origin_weather_hourly_at_dep(df, airports_meta=airports_meta, cache_dir=hourly_cache_dir,
+                                              historical_cache_dir=hist_cache)
 
         if bool(weather_cfg.get("dest_hourly_at_arr", True)):
             dest_hourly_cache_dir = weather_cfg.get("dest_hourly_cache_dir", hourly_cache_dir)
-            df = add_dest_weather_hourly_at_arr(df, airports_meta=airports_meta, cache_dir=dest_hourly_cache_dir)
+            df = add_dest_weather_hourly_at_arr(df, airports_meta=airports_meta, cache_dir=dest_hourly_cache_dir,
+                                                historical_cache_dir=hist_cache)
 
     strike_cfg = cfg.get("strike") or {}
     if bool(strike_cfg.get("enabled", False)):
