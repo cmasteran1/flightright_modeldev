@@ -809,6 +809,79 @@ def _fetch_daily_weather(lat, lon, start, end, tz):
     return _daily_df_from_payload(r.json())
 
 
+# ---------------------------------------------------------------------------
+# Strike / labor-action enrichment
+# ---------------------------------------------------------------------------
+
+def add_strike_status(df: pd.DataFrame, strike_cache_path: str) -> pd.DataFrame:
+    """
+    Join labor-action severity onto each flight row based on FlightDate,
+    Reporting_Airline, and Origin airport.
+
+    Only adds strike_severity (0-5 ordinal) — the one enrichment-time feature
+    with real signal.  days_to_strike and carrier_delay_rate_anomaly_7d are
+    computed later in features_dep.py from the strike cache and history pool.
+    """
+    cache_path = Path(strike_cache_path)
+    if not cache_path.exists():
+        print(f"[WARN] Strike cache not found at {cache_path}; skipping strike enrichment")
+        df["strike_severity"] = np.int8(0)
+        return df
+
+    strikes = pd.read_parquet(cache_path)
+    print(f"[INFO] Loaded {len(strikes)} labor action events from {cache_path}")
+
+    df = df.copy()
+    fd = pd.to_datetime(df["FlightDate"], errors="coerce").dt.normalize()
+    airline = df["Reporting_Airline"].astype(str).str.upper().str.strip()
+    origin = df["Origin"].astype(str).str.upper().str.strip()
+
+    max_severity = np.zeros(len(df), dtype=np.int8)
+
+    for _, evt in strikes.iterrows():
+        evt_start = pd.Timestamp(evt["action_start_date"])
+        evt_end = pd.Timestamp(evt["action_end_date"])
+        evt_airline = str(evt.get("airline_iata", "")).upper().strip()
+        evt_airports = str(evt.get("affected_airports", "ALL")).upper().strip()
+        evt_severity = int(evt.get("severity", 1)) if pd.notna(evt.get("severity")) else 1
+        evt_scope = str(evt.get("scope", "")).lower().strip()
+
+        if pd.isna(evt_start):
+            continue
+        if pd.isna(evt_end):
+            evt_end = evt_start
+
+        date_mask = (fd >= evt_start) & (fd <= evt_end)
+        if not date_mask.any():
+            continue
+
+        # Carrier match
+        if evt_airline == "ALL" or evt_scope == "system_wide":
+            carrier_mask = date_mask
+        else:
+            carrier_mask = date_mask & (airline == evt_airline)
+
+        # Airport match
+        if evt_airports == "ALL" or evt_scope in ("airline_wide", "system_wide"):
+            airport_mask = date_mask
+        else:
+            airport_set = {a.strip() for a in evt_airports.split(",")}
+            airport_mask = date_mask & origin.isin(airport_set)
+
+        combined = carrier_mask | airport_mask
+        max_severity[combined.values] = np.maximum(
+            max_severity[combined.values], evt_severity
+        )
+
+    df["strike_severity"] = max_severity
+
+    n_active = (max_severity > 0).sum()
+    print(f"[OK] Strike enrichment: {n_active:,} rows with severity > 0 "
+          f"({n_active / len(df) * 100:.2f}%)")
+
+    return df
+
+
 def add_origin_weather_daily(df, airports_meta: Dict[str, Tuple[float, float, str]], cache_dir: str):
     df = df.copy()
     df["FlightDate"] = pd.to_datetime(df["FlightDate"], errors="coerce")
@@ -1602,6 +1675,14 @@ def main():
         if bool(weather_cfg.get("dest_hourly_at_arr", True)):
             dest_hourly_cache_dir = weather_cfg.get("dest_hourly_cache_dir", hourly_cache_dir)
             df = add_dest_weather_hourly_at_arr(df, airports_meta=airports_meta, cache_dir=dest_hourly_cache_dir)
+
+    strike_cfg = cfg.get("strike") or {}
+    if bool(strike_cfg.get("enabled", False)):
+        strike_cache = strike_cfg.get("cache_path", "../flightrightdata/strike_cache/us_aviation_labor_actions.parquet")
+        strike_cache_resolved = _abspath(strike_cache, base="repo")
+        df = add_strike_status(df, str(strike_cache_resolved))
+    else:
+        print("[INFO] Strike enrichment disabled (set strike.enabled=true to enable)")
 
     out_enriched = cfg.get("output_enriched_unbalanced_path", "intermediate/enriched_{target}_unbalanced.parquet")
     out_enriched = _format_path_template(out_enriched, target=target)

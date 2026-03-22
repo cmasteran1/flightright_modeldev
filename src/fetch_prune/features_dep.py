@@ -1272,6 +1272,133 @@ def add_delay_cause_rates_from_history(
     return df
 
 
+# ---------------------------------------------------------------------------
+# Strike / labor-action features
+# ---------------------------------------------------------------------------
+
+def add_strike_proximity_features(
+    df: pd.DataFrame,
+    strike_cache_path: str,
+) -> pd.DataFrame:
+    """
+    Compute days_to_strike from strike cache data.
+
+    Adds:
+      days_to_strike (float) – days until nearest announced strike for carrier
+                               (positive = future, 0 = strike day, NaN if none
+                               within 90-day window)
+    """
+    df = df.copy()
+    cache_path = Path(strike_cache_path)
+
+    if not cache_path.exists():
+        print(f"[WARN] Strike cache not found at {cache_path}; filling days_to_strike with NaN")
+        df["days_to_strike"] = np.nan
+        return df
+
+    strikes = pd.read_parquet(cache_path)
+    fd = pd.to_datetime(df["FlightDate"], errors="coerce").dt.normalize()
+    airline = df["Reporting_Airline"].astype(str).str.upper().str.strip()
+
+    days_to = pd.Series(np.nan, index=df.index, dtype=np.float32)
+
+    for _, evt in strikes.iterrows():
+        evt_start = pd.Timestamp(evt["action_start_date"])
+        evt_airline = str(evt.get("airline_iata", "")).upper().strip()
+        evt_scope = str(evt.get("scope", "")).lower().strip()
+
+        if pd.isna(evt_start):
+            continue
+
+        delta_to_start = (evt_start - fd).dt.days.astype(float)
+
+        if evt_airline == "ALL" or evt_scope == "system_wide":
+            carrier_match = pd.Series(True, index=df.index)
+        else:
+            carrier_match = airline == evt_airline
+
+        future_mask = carrier_match & (delta_to_start >= 0) & (delta_to_start <= 90)
+        days_to = days_to.where(~future_mask, np.fmin(days_to[future_mask], delta_to_start[future_mask]))
+
+    df["days_to_strike"] = days_to
+
+    n_prox = days_to.notna().sum()
+    print(f"[OK] Strike proximity: {n_prox:,} rows with upcoming strike within 90d")
+
+    return df
+
+
+def add_carrier_delay_rate_anomaly(
+    df: pd.DataFrame,
+    hist: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Compute z-score of carrier's 7-day CarrierDelay rate vs 60-day baseline.
+
+    Fires on any anomalous carrier-delay spike, including undocumented labor actions.
+
+    Adds:
+      carrier_delay_rate_anomaly_7d (float)
+    """
+    df = df.copy()
+
+    if "CarrierDelay" not in hist.columns:
+        print("[WARN] CarrierDelay not in history pool; filling anomaly feature with NaN")
+        df["carrier_delay_rate_anomaly_7d"] = np.nan
+        return df
+
+    h = hist.copy()
+    h["FlightDate"] = pd.to_datetime(h.get("FlightDate"), errors="coerce").dt.normalize()
+    h["Reporting_Airline"] = h.get("Reporting_Airline", "").astype(str).str.upper().str.strip()
+    h["CarrierDelay"] = pd.to_numeric(h.get("CarrierDelay"), errors="coerce").fillna(0.0)
+    h["_has_carrier_delay"] = (h["CarrierDelay"] > 0).astype(float)
+
+    daily = (
+        h.dropna(subset=["Reporting_Airline", "FlightDate"])
+        .groupby(["Reporting_Airline", "FlightDate"], as_index=False)
+        [["_has_carrier_delay"]]
+        .mean()
+        .sort_values(["Reporting_Airline", "FlightDate"])
+    )
+
+    # 7-day rolling rate (shifted by 1 to avoid leakage)
+    daily["rate_7d"] = (
+        daily.groupby("Reporting_Airline")["_has_carrier_delay"]
+        .apply(lambda s: s.shift(1).rolling(window=7, min_periods=3).mean())
+        .reset_index(level=0, drop=True)
+    )
+
+    # 60-day rolling mean and std for baseline
+    daily["rate_60d_mean"] = (
+        daily.groupby("Reporting_Airline")["_has_carrier_delay"]
+        .apply(lambda s: s.shift(1).rolling(window=60, min_periods=14).mean())
+        .reset_index(level=0, drop=True)
+    )
+    daily["rate_60d_std"] = (
+        daily.groupby("Reporting_Airline")["_has_carrier_delay"]
+        .apply(lambda s: s.shift(1).rolling(window=60, min_periods=14).std())
+        .reset_index(level=0, drop=True)
+    )
+
+    # Z-score
+    daily["carrier_delay_rate_anomaly_7d"] = (
+        (daily["rate_7d"] - daily["rate_60d_mean"]) / daily["rate_60d_std"].clip(lower=0.01)
+    )
+
+    df["FlightDate"] = pd.to_datetime(df.get("FlightDate"), errors="coerce").dt.normalize()
+    df["Reporting_Airline"] = df.get("Reporting_Airline", "").astype(str).str.upper().str.strip()
+    df = df.merge(
+        daily[["Reporting_Airline", "FlightDate", "carrier_delay_rate_anomaly_7d"]],
+        on=["Reporting_Airline", "FlightDate"],
+        how="left",
+    )
+
+    print(f"[OK] Carrier delay anomaly: mean={df['carrier_delay_rate_anomaly_7d'].mean():.3f}, "
+          f"std={df['carrier_delay_rate_anomaly_7d'].std():.3f}")
+
+    return df
+
+
 def add_turn_time_hours(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df["Flight_Number_Reporting_Airline"] = pd.to_numeric(df.get("Flight_Number_Reporting_Airline"), errors="coerce")
@@ -1427,6 +1554,42 @@ def balance_to_pos_frac(df: pd.DataFrame, label_col: str, pos_frac: float, seed:
     return out
 
 
+# ---------------------------------------------------------------------------
+# v8 new features (from analyst feature analysis)
+# ---------------------------------------------------------------------------
+
+def add_is_peak_hour(df: pd.DataFrame) -> pd.DataFrame:
+    """Flag departure hours 16-20 (peak congestion window). +2.9 bp AUC."""
+    df = df.copy()
+    hour = pd.to_numeric(df.get("sched_dep_hour"), errors="coerce")
+    df["is_peak_hour"] = ((hour >= 16) & (hour <= 20)).astype("Int8")
+    return df
+
+
+def add_hub_max_lateaircraft_last1(df: pd.DataFrame) -> pd.DataFrame:
+    """Max hub late-aircraft rate across all hubs (last 1d). +2.0 bp AUC."""
+    df = df.copy()
+    hub_la_cols = [c for c in df.columns if c.startswith("hub_") and c.endswith("_lateaircraft_rate_last1")]
+    if not hub_la_cols:
+        df["hub_max_lateaircraft_last1"] = np.nan
+        return df
+    df["hub_max_lateaircraft_last1"] = df[hub_la_cols].max(axis=1)
+    return df
+
+
+def add_wind_x_precip(df: pd.DataFrame) -> pd.DataFrame:
+    """Interaction: windspeed * precipitation at departure. +1.8 bp AUC."""
+    df = df.copy()
+    wind = pd.to_numeric(df.get("origin_dep_windspeed_kmh"), errors="coerce")
+    if wind.isna().all() and "origin_dep_windspeed_10m" in df.columns:
+        wind = pd.to_numeric(df["origin_dep_windspeed_10m"], errors="coerce")
+    precip = pd.to_numeric(df.get("origin_dep_precip_mm"), errors="coerce")
+    if precip.isna().all() and "origin_dep_precipitation" in df.columns:
+        precip = pd.to_numeric(df["origin_dep_precipitation"], errors="coerce")
+    df["wind_x_precip"] = wind * precip
+    return df
+
+
 # ------------------------------ main ------------------------------
 def main():
     if len(sys.argv) != 2:
@@ -1478,6 +1641,7 @@ def main():
         "origin_dep_visibility",
         "origin_dep_cape",
         "origin_dep_cloudcover",
+        "strike_severity",
     ]
 
     print(f"[INFO] reading enriched -> {in_path}")
@@ -1517,6 +1681,7 @@ def main():
         "NASDelay",
         "LateAircraftDelay",
         "WeatherDelay",
+        "CarrierDelay",
     ]
     hist = _read_parquet_projected(hist_path, hist_cols_want)
 
@@ -1568,6 +1733,8 @@ def main():
         df["origin_dep_hour_weathercode"] = pd.to_numeric(df["origin_dep_weathercode"], errors="coerce").astype("Int64").astype("object")
 
     df = add_weather_kelvin(df)
+    df = add_is_peak_hour(df)
+    df = add_wind_x_precip(df)
 
     if "CRSElapsedTime" in df.columns:
         df["CRSElapsedTime"] = pd.to_numeric(df["CRSElapsedTime"], errors="coerce")
@@ -1597,6 +1764,15 @@ def main():
     df = add_carrier_dep_delay_baselines_from_history_multi(df, hist, windows_days=windows_days)
     df = add_origin_dep_delay_baselines_from_history_multi(df, hist, windows_days=windows_days)
     df = add_delay_cause_rates_from_history(df, hist, windows_days=windows_days)
+
+    strike_cfg = feat_cfg.get("strike") or {}
+    if strike_cfg.get("enabled", False):
+        strike_cache = strike_cfg.get("cache_path", "../flightrightdata/strike_cache/us_aviation_labor_actions.parquet")
+        strike_cache_resolved = _abspath(strike_cache, base="repo")
+        df = add_strike_proximity_features(df, str(strike_cache_resolved))
+        df = add_carrier_delay_rate_anomaly(df, hist)
+    else:
+        print("[INFO] Strike features disabled (set features_dep.strike.enabled=true to enable)")
 
     tail_cfg = feat_cfg.get("tail_history") or {}
     if tail_cfg.get("enabled", True):
@@ -1628,6 +1804,7 @@ def main():
         else:
             print(f"[WARN] hub_spillover: no preset for airline={hub_airline!r}; add to AIRLINE_HUB_PRESETS or set hub_spillover.hubs explicitly")
     df = add_hub_spillover_from_history(df, hist, windows_days=windows_days, hubs=hub_hubs)
+    df = add_hub_max_lateaircraft_last1(df)
 
     wx_cfg = feat_cfg.get("hub_weather") or {}
     if wx_cfg.get("enabled", True):

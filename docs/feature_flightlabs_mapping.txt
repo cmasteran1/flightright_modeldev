@@ -1,13 +1,12 @@
 ================================================================================
 FEATURE → FLIGHTLABS API MAPPING REFERENCE
 Flight Delay Prediction Models (Departure & Arrival)
-Last updated: 2026-03-19  (rev 4 — removed tail/aircraft features from training:
-             aircraft_type, Aircraft_Age_Bucket, tail_depdelay_mean, tail_lateaircraft_rate,
-             tail_leg_num_day, turn_time_hours, is_first_leg_of_day)
+Last updated: 2026-03-22  (rev 5 — v8: added strike features, analyst-recommended
+             features, dropped 10 low-importance features per SHAP analysis)
 ================================================================================
 
-This document describes every feature used by the departure delay model (v7g)
-and the arrival delay model (v7g arr) in plain English, and maps each one to a
+This document describes every feature used by the departure delay model (v8)
+and the arrival delay model in plain English, and maps each one to a
 strategy for computing it using the FlightLabs API instead of BTS data.
 
 Where used:
@@ -784,6 +783,72 @@ TIER 3 — Per-prediction at request time:
                                                 TTL ~12 h; covers 14-day window)
   Weather:                                    – Open-Meteo, 2 calls, free
   TOTAL FlightLabs per prediction: 2 (cached) to 3 (first prediction of day)
+
+================================================================================
+v8 ANALYST-RECOMMENDED FEATURES
+================================================================================
+
+Added in v8 based on SHAP analysis and AUC delta testing.
+
+Feature                          Type   Source            Deployment strategy
+------                           ----   ------            -------------------
+is_peak_hour           [DEP]     int8   Schedule          1 if sched_dep_hour in [16,20].
+                                                          +2.9 bp AUC. Computed from CRSDepTime.
+hub_max_lateaircraft_last1 [DEP] float  FlightLabs hist   Max late-aircraft rate across all hubs
+                                                          (last 1 day). +2.0 bp AUC. Derived from
+                                                          existing hub rolling features.
+wind_x_precip          [DEP]     float  Open-Meteo        windspeed * precipitation at departure.
+                                                          +1.8 bp AUC. Computed from existing
+                                                          weather features (no new data needed).
+
+v8 FEATURES DROPPED (low importance per SHAP analysis)
+------------------------------------------------------
+  Reporting_Airline, is_holiday, dest_depdelay_mean_last7,
+  origin_daily_windspeed_max_kmh, origin_depdelay_mean_last7,
+  origin_dep_windspeed_kmh, flightnum_od_low_support_last14d,
+  origin_depdelay_mean_last1, origin_lateaircraft_rate_last14,
+  dest_depdelay_mean_last14
+
+These features had SHAP < 0.005 and/or were redundant with higher-importance
+features. Removing them reduces noise and speeds up training/inference.
+
+
+================================================================================
+STRIKE / LABOR-ACTION FEATURES (v8)
+================================================================================
+
+Added in v8. These features capture the impact of airline/airport worker labor
+actions on flight delays. All features are knowable days/weeks before the flight
+due to Railway Labor Act requirements (30-day cooling-off periods) and public
+strike authorization vote announcements.
+
+Data source: Curated CSV at ../flightrightdata/data/meta/us_aviation_labor_actions.csv
+Updated manually when labor actions are announced (a few times per year at most).
+
+Only 3 features survived correlation analysis (weak/confounded features dropped
+to avoid diluting the model):
+
+Feature                          Type   Source            Deployment strategy
+------                           ----   ------            -------------------
+strike_severity        [BOTH]    int8   curated CSV       Max severity (0-5) from matching events.
+                                                          Sev 5 (ATC shutdown) = 29% delay rate
+                                                          vs 24% baseline.
+days_to_strike         [BOTH]    float  curated CSV       Days until nearest announced strike (0-90).
+                                                          Pearson r=0.104 with DepDelayMinutes.
+                                                          Q4-Q1 delay diff = +8.1 min.
+carrier_delay_rate_anomaly_7d    float  FlightLabs hist   Z-score of 7d CarrierDelay rate vs 60d
+                                                          baseline. Spearman r=0.116.
+                                                          Q4-Q1 delay diff = +6.6 min.
+                                                          Fires broadly (not just labeled events).
+
+Dropped features (weak or confounded signal in correlation analysis):
+  strike_active_carrier, strike_active_origin, strike_worker_type,
+  in_cooling_off, cooling_off_days_remaining, days_since_strike_end,
+  strike_spillover_origin
+
+Deployment cost: ZERO additional API calls. The curated CSV is a static file
+updated manually. carrier_delay_rate_anomaly_7d is computed from existing
+FlightLabs historical flight data (same data used for carrier rolling stats).
 
 ================================================================================
 END OF DOCUMENT

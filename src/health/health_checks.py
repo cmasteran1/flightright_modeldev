@@ -304,6 +304,16 @@ _reg_num("dest_airline_arrivals_pm60_sched", 0, 800, "dest airline arrivals +-60
 _reg_num("dest_arrivals_pm60_eta", 0, 800, "dest arrivals +-60min (ETA)")
 _reg_num("dest_airline_arrivals_pm60_eta", 0, 800, "dest airline arrivals +-60min (ETA)")
 
+# --- v8 analyst-recommended features ---
+_reg_num("is_peak_hour", 0, 1, "departure hour 16-20 flag")
+_reg_num("hub_max_lateaircraft_last1", 0, 1, "max hub late-aircraft rate (last 1d)")
+_reg_num("wind_x_precip", 0, 200000, "windspeed * precipitation interaction")
+
+# --- Strike / labor-action features (v8) ---
+_reg_num("strike_severity", 0, 5, "max severity of active labor action (0-5)")
+_reg_num("days_to_strike", 0, 90, "days until nearest announced strike")
+_reg_num("carrier_delay_rate_anomaly_7d", -10, 10, "z-score of 7d carrier delay rate vs 60d baseline")
+
 # --- Raw weather column names (from prepare_dataset before rename) ---
 for _raw in [
     "origin_temperature_2m_max", "origin_temperature_2m_min",

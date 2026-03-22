@@ -1,0 +1,318 @@
+================================================================================
+STRIKE FEATURE GUIDE — Prediction-Time Data Collection & Interpretation
+FlightRight v8 Departure/Arrival Delay Models
+================================================================================
+
+This document explains the 3 strike/labor-action features, what they mean,
+how to obtain the data to compute them for future flights, and recommended
+monitoring sources.
+
+
+================================================================================
+1. FEATURE DEFINITIONS
+================================================================================
+
+strike_severity  (int8, 0-5)
+    The maximum severity of any active labor action affecting this flight on
+    the scheduled departure date.
+
+    Scale:
+      0 = No active labor action
+      1 = Strike authorization vote in progress (no operational impact yet)
+      2 = Informational picketing (symbolic, minimal operational impact)
+      3 = Partial work action — sickout, work slowdown, or contractor strike
+          at specific airports (e.g., ground handler strikes)
+      4 = Full airline strike — carrier-wide work stoppage
+      5 = System-wide disruption — ATC staffing crisis, government shutdown
+          affecting air traffic control, nationwide labor action
+
+    Matching logic:
+      - If the flight's airline has an active action, match on airline
+      - If the action is system_wide or airline="ALL", match all flights
+      - If the action is airport_specific, match flights departing from
+        affected airports
+      - When multiple actions overlap, take the maximum severity
+
+    Correlation with delay (from analysis on 2.5M WN flights 2024-2025):
+      Severity 0: 24.2% delay rate (15+ min), mean delay 14.6 min
+      Severity 1: 20.7% delay rate, mean delay 12.1 min (auth votes only)
+      Severity 2:  7.2% delay rate, mean delay  3.5 min (single-day picket)
+      Severity 5: 29.0% delay rate, mean delay 15.8 min (ATC shutdown)
+
+    Note: Severity 1-2 showed LOWER delays than baseline because authorization
+    votes and picketing tend to happen on normal operating days with no actual
+    disruption. The model learns to distinguish severity levels — only 3+ has
+    real operational impact.
+
+
+days_to_strike  (float, 0-90 or NaN)
+    Days until the nearest announced strike/labor action affecting the flight's
+    airline. Captures the pre-strike disruption ramp — airlines begin pre-
+    canceling flights, crews call in sick, and operations degrade in the days
+    leading up to an announced action.
+
+      Positive = strike is in the future (e.g., 14 = strike starts in 14 days)
+      0 = strike day
+      NaN = no announced strike within 90-day window for this carrier
+
+    Matching logic:
+      - Looks at all events where airline matches (or system_wide/ALL)
+      - Computes days from FlightDate to each event's action_start_date
+      - Takes the minimum positive value within 90 days
+
+    Correlation: Pearson r=0.104 with DepDelayMinutes.
+      Flights 0-7 days from a strike: mean delay 13.0 min
+      Flights 60-90 days from a strike: mean delay 21.1 min
+      (The higher delay at 60-90 days reflects that the "90-day window" often
+       captures flights during other disruption periods. The model learns the
+       non-linear relationship.)
+
+
+carrier_delay_rate_anomaly_7d  (float, typically -2 to +3)
+    Z-score of the carrier's 7-day CarrierDelay rate compared to its own
+    60-day rolling baseline. This is a continuous anomaly detector that fires
+    on ANY unusual spike in carrier-caused delays, including:
+      - Undocumented labor actions (sickouts not formally announced)
+      - IT system outages
+      - Crew scheduling failures
+      - Maintenance crises
+
+    Computation:
+      1. For each (airline, date), compute the fraction of flights with
+         CarrierDelay > 0 over the prior 7 days (shifted by 1 day)
+      2. Compute the 60-day rolling mean and std of that same rate
+      3. Z-score = (7d_rate - 60d_mean) / max(60d_std, 0.01)
+
+    Values:
+       0.0 = carrier delay rate is at its normal baseline
+      +1.0 = carrier delay rate is 1 std above normal
+      +2.0 = carrier delay rate is 2 std above normal (significant anomaly)
+      -1.0 = carrier delay rate is unusually low
+
+    Correlation: Spearman r=0.116 with DepDelayMinutes.
+      Q1 (lowest anomaly): mean delay 10.8 min
+      Q4 (highest anomaly): mean delay 17.5 min (+6.6 min difference)
+
+    This is the strongest strike-related feature because it fires continuously
+    (not just on labeled events) and captures the ACTUAL operational impact
+    rather than the declared labor action.
+
+    At prediction time: computed from FlightLabs historical flight data using
+    the same rolling window logic as other carrier delay baselines. No
+    additional data source needed.
+
+
+================================================================================
+2. HOW TO OBTAIN STRIKE DATA FOR FUTURE FLIGHTS
+================================================================================
+
+The strike data is maintained in a curated CSV file:
+  ../flightrightdata/data/meta/us_aviation_labor_actions.csv
+
+This file must be updated when new labor actions are announced. Here is where
+to find that information and how to monitor it.
+
+
+--- 2a. PRIMARY MONITORING SOURCES ---
+
+(1) National Mediation Board (NMB)  —  https://www.nmb.gov
+    What: The NMB mediates all airline labor disputes under the Railway Labor
+          Act. When mediation fails, the NMB "releases" the parties, starting
+          a mandatory 30-day cooling-off period. After 30 days, a strike
+          becomes legal.
+    Lead time: 30+ days before any legal airline strike
+    What to watch:
+      - NMB case docket: https://www.nmb.gov/representation/
+      - Federal Register notices: search "National Mediation Board" at
+        https://www.federalregister.gov/agencies/national-mediation-board
+      - NMB press releases (infrequent but authoritative)
+    How to monitor: Check monthly. NMB releases are rare (a few per decade
+    for airlines). The Federal Register publishes formal notices.
+
+(2) Union press releases — the fastest public signal
+      ALPA (pilots):           https://www.alpa.org/news-and-events/news-room
+      AFA-CWA (flight attend): https://www.afacwa.org/press
+      SWAPA (SW pilots):       https://www.swapa.org/news/
+      TWU Local 556 (SW FAs):  https://www.twu556.org/
+      APFA (AA flight attend): https://www.apfa.org/news/
+      APA (AA pilots):         https://www.alliedpilots.org/News
+      IBT/Teamsters (ground):  https://teamster.org/divisions/airline/
+    What to watch:
+      - Strike authorization vote announcements (gives weeks of lead time)
+      - Strike date announcements (gives days of lead time)
+      - Contract ratification votes (signals resolution — update end_date)
+    How to monitor: RSS feeds where available, or check weekly during active
+    negotiations. Most unions post authorization votes prominently.
+
+(3) BLS Work Stoppages  —  https://www.bls.gov/wsp/
+    What: Bureau of Labor Statistics tracks all major US work stoppages
+          involving 1,000+ workers. Published monthly.
+    Lead time: Retrospective only (confirms events, doesn't predict them)
+    Use: Validate that your CSV captured all significant events.
+    How to monitor: Check monthly report for aviation entries.
+
+
+--- 2b. SECONDARY / NEWS SOURCES ---
+
+(4) Aviation trade press
+      - Simple Flying:    https://simpleflying.com (search "strike" or "union")
+      - The Points Guy:   https://thepointsguy.com
+      - Aviation Week:    https://aviationweek.com
+      - View from the Wing: https://viewfromthewing.com
+    These outlets cover labor disputes earlier than mainstream media.
+
+(5) News APIs (for automated monitoring, optional)
+      - NewsAPI.org (free tier: 100 req/day)
+        Query: "airline strike" OR "pilot strike" OR "flight attendant strike"
+                OR "air traffic controller" OR "airline labor"
+        Endpoint: https://newsapi.org/v2/everything?q=...&language=en
+      - GDELT Project (free, real-time global news monitoring)
+        https://www.gdeltproject.org/
+        Search themes: LABOR_STRIKE, AVIATION
+    These can be used to build an alert system that flags potential events
+    for manual review. Do NOT auto-ingest — use as a trigger to update the
+    curated CSV after human verification.
+
+(6) FAA advisories (for ATC/system-wide events)
+      - FAA NOTAM system: https://notams.aim.faa.gov/
+      - FAA Air Traffic Activity: https://aspm.faa.gov/
+    Relevant for government shutdowns, ATC staffing crises, and system-wide
+    ground stops that may be labor-related.
+
+
+--- 2c. RECOMMENDED MONITORING WORKFLOW ---
+
+ROUTINE (weekly, ~5 minutes):
+  1. Scan ALPA, AFA-CWA, SWAPA news pages for any new announcements
+  2. Check NMB website for new case activity
+  3. If nothing new, no action needed
+
+DURING ACTIVE NEGOTIATIONS (daily):
+  1. Monitor the relevant union's press page daily
+  2. Watch for: authorization vote results, NMB release notices,
+     announced strike dates, tentative agreements
+  3. Update the CSV immediately when any of these occur
+
+WHEN A NEW EVENT IS IDENTIFIED:
+  1. Add a row to us_aviation_labor_actions.csv with all known fields
+  2. Run: python src/fetch_prune/collect_strike_cache.py
+     (validates and writes updated parquet)
+  3. The prediction service picks up the new parquet on next load
+
+AFTER AN EVENT RESOLVES:
+  1. Update action_end_date in the CSV (contract ratified, strike ended)
+  2. Re-run the collector
+
+
+--- 2d. KEY INSIGHT: THE RAILWAY LABOR ACT GIVES YOU LEAD TIME ---
+
+US airline strikes are NOT surprise events. The Railway Labor Act requires:
+  1. Union files Section 6 notice to open negotiations
+  2. Direct negotiations (months to years)
+  3. NMB mediation (months)
+  4. If mediation fails: NMB releases parties + 30-day cooling-off
+  5. After 30 days: strike becomes legal
+
+Strike AUTHORIZATION votes happen at step 2-3 and give weeks of advance
+notice. NMB release at step 4 gives 30 days. In practice, no major US
+airline crew strike has occurred since 2010 (Spirit pilots), and that was a
+2-day walkout. The system is designed to prevent strikes.
+
+The most disruptive event in recent history was the 2025 government shutdown
+ATC sickouts (severity 5), which was announced by the shutdown itself —
+giving days to weeks of lead time.
+
+For the prediction model, this means:
+  - You will almost always know about severity 3+ events days/weeks ahead
+  - days_to_strike captures the anticipation/pre-cancellation ramp
+  - carrier_delay_rate_anomaly_7d catches the actual operational impact
+    even if you miss labeling an event in the CSV
+
+
+================================================================================
+3. CSV SCHEMA REFERENCE
+================================================================================
+
+File: ../flightrightdata/data/meta/us_aviation_labor_actions.csv
+
+Column                Type      Description
+------                ----      -----------
+event_id              str       Unique ID, e.g. "2025_ATC_SHUTDOWN"
+airline_iata          str       IATA code (WN, AA, DL, UA, etc.) or "ALL"
+worker_type           str       pilot, flight_attendant, mechanic, ground_crew,
+                                atc, dispatcher
+scope                 str       airline_wide, airport_specific, system_wide
+affected_airports     str       Comma-separated IATA codes, or "ALL"
+announced_date        date      When the action became public knowledge
+cooling_off_start     date      NMB 30-day cooling-off start (nullable)
+action_start_date     date      First day of work action / vote open date
+action_end_date       date      Last day of action / vote close date
+workers_involved      int       Approximate headcount
+action_type           str       strike, sickout, work_slowdown, lockout,
+                                strike_authorization_vote, informational_picketing
+severity              int       1-5 (see scale in section 1)
+source                str       URL citation
+notes                 str       Free text context
+
+To add a new event: append a row, run collect_strike_cache.py, done.
+
+
+================================================================================
+4. EXAMPLES: ADDING COMMON EVENT TYPES
+================================================================================
+
+Example 1: New strike authorization vote at United pilots
+
+  event_id:          2026_UA_PILOTS_SAV
+  airline_iata:      UA
+  worker_type:       pilot
+  scope:             airline_wide
+  affected_airports: ALL
+  announced_date:    2026-04-01
+  cooling_off_start: (leave blank)
+  action_start_date: 2026-04-01
+  action_end_date:   2026-04-15
+  workers_involved:  14000
+  action_type:       strike_authorization_vote
+  severity:          1
+  source:            https://...
+  notes:             ALPA authorization vote open Apr 1-15
+
+Example 2: Government shutdown affecting ATC
+
+  event_id:          2026_ATC_SHUTDOWN_2
+  airline_iata:      ALL
+  worker_type:       atc
+  scope:             system_wide
+  affected_airports: ALL
+  announced_date:    2026-06-01
+  cooling_off_start: (leave blank)
+  action_start_date: 2026-06-07
+  action_end_date:   (leave blank until resolved)
+  workers_involved:  13000
+  action_type:       work_slowdown
+  severity:          5
+  source:            https://...
+  notes:             Gov shutdown; ATC working without pay, sickout reports
+
+Example 3: Ground handler strike at specific airports
+
+  event_id:          2026_SWISSPORT_JFK
+  airline_iata:      ALL
+  worker_type:       ground_crew
+  scope:             airport_specific
+  affected_airports: JFK,EWR
+  announced_date:    2026-05-10
+  cooling_off_start: (leave blank — ground handlers not under RLA)
+  action_start_date: 2026-05-15
+  action_end_date:   2026-05-15
+  workers_involved:  200
+  action_type:       strike
+  severity:          3
+  source:            https://...
+  notes:             24-hour ULP strike at JFK and EWR
+
+
+================================================================================
+END OF DOCUMENT
+================================================================================
