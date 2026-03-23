@@ -338,7 +338,7 @@ def _load_balanced_or_sample(cfg: dict, thr: int, df_train_period: pd.DataFrame)
         raise RuntimeError(f"Missing label column in training data: {ycol}")
 
     train_cfg = cfg.get("training") or {}
-    max_rows = int(train_cfg.get("max_train_rows", 20000))
+    max_rows = int(train_cfg.get("max_train_rows", 0))
     seed = int(train_cfg.get("seed", 1337))
 
     # Candidate balanced templates
