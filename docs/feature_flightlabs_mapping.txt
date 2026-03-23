@@ -1,8 +1,8 @@
 ================================================================================
 FEATURE → FLIGHTLABS API MAPPING REFERENCE
 Flight Delay Prediction Models (Departure & Arrival)
-Last updated: 2026-03-22  (rev 5 — v8: added strike features, analyst-recommended
-             features, dropped 10 low-importance features per SHAP analysis)
+Last updated: 2026-03-22  (rev 6 — v8: cleaned blueprints for 2024-2025 max data,
+             removed tail/aircraft features, added strike + analyst features)
 ================================================================================
 
 This document describes every feature used by the departure delay model (v8)

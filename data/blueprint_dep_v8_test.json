@@ -37,13 +37,8 @@
     "cache_path": "../flightrightdata/strike_cache/us_aviation_labor_actions.parquet"
   },
 
-  "add_aircraft_type": true,
-  "faa_registry": {
-    "master_path":  "../flightrightdata/data/meta/master.txt",
-    "acftref_path": "../flightrightdata/data/meta/acftref.txt"
-  },
-  "add_aircraft_age": true,
-  "aircraft_registry_csv": "../flightrightdata/data/meta/aircraft_registry_clean.csv",
+  "add_aircraft_type": false,
+  "add_aircraft_age":  false,
 
   "history_lookback_days": 30,
   "output_enriched_unbalanced_path": "data/intermediate/WN_v8_test_unbalanced.parquet",
@@ -58,12 +53,6 @@
     "low_support_leq":       2,
     "rolling_windows_days":  [1, 7, 14],
 
-    "add_aircraft_type": true,
-    "faa_registry": {
-      "master_path":  "../flightrightdata/data/meta/master.txt",
-      "acftref_path": "../flightrightdata/data/meta/acftref.txt"
-    },
-
     "hub_spillover": {
       "airline": "WN",
       "hubs": ["DEN", "PHX", "BWI", "MDW", "BNA"]
@@ -72,7 +61,7 @@
       "enabled": false
     },
     "tail_history": {
-      "enabled": true
+      "enabled": false
     },
     "dest_rolling": {
       "enabled": true
