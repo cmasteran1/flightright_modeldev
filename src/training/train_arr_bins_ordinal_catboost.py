@@ -178,15 +178,23 @@ def enforce_monotone_ge_probs(p_ge: np.ndarray) -> np.ndarray:
     return p
 
 
-def ge_to_bins(p_ge15, p_ge30, p_ge45, p_ge60) -> np.ndarray:
-    p_ge = enforce_monotone_ge_probs(np.vstack([p_ge15, p_ge30, p_ge45, p_ge60]).T)
-    p15, p30, p45, p60 = p_ge[:, 0], p_ge[:, 1], p_ge[:, 2], p_ge[:, 3]
-    p_lt15 = 1.0 - p15
-    p_15_30 = np.maximum(0.0, p15 - p30)
-    p_30_45 = np.maximum(0.0, p30 - p45)
-    p_45_60 = np.maximum(0.0, p45 - p60)
-    p_ge60 = np.maximum(0.0, p60)
-    P = np.vstack([p_lt15, p_15_30, p_30_45, p_45_60, p_ge60]).T
+def make_bin_labels(thresholds: List[int]) -> List[str]:
+    labels = [f"< {thresholds[0]} min"]
+    for i in range(len(thresholds) - 1):
+        labels.append(f"{thresholds[i]}-{thresholds[i+1]} min")
+    labels.append(f">= {thresholds[-1]} min")
+    return labels
+
+
+def ge_to_bins(p_ge_dict: Dict[int, np.ndarray], thresholds: List[int]) -> np.ndarray:
+    p_ge = enforce_monotone_ge_probs(
+        np.vstack([p_ge_dict[t] for t in thresholds]).T
+    )
+    bins = [1.0 - p_ge[:, 0]]
+    for j in range(len(thresholds) - 1):
+        bins.append(np.maximum(0.0, p_ge[:, j] - p_ge[:, j + 1]))
+    bins.append(np.maximum(0.0, p_ge[:, -1]))
+    P = np.vstack(bins).T
     Z = P.sum(axis=1, keepdims=True)
     Z[Z == 0] = 1.0
     return P / Z
@@ -401,10 +409,10 @@ def main():
     outdir = _as_data_path(OUTDIR)
     outdir.mkdir(parents=True, exist_ok=True)
 
-    thresholds = cfg.get("thresholds", [15, 30, 45, 60])
+    thresholds = cfg.get("thresholds", [15, 30, 60, 120])
     thresholds = [int(x) for x in thresholds]
     if len(thresholds) != 4:
-        raise SystemExit("This trainer expects exactly 4 thresholds (e.g., 15/30/45/60).")
+        raise SystemExit("This trainer expects exactly 4 thresholds.")
 
     eval_cfg = cfg.get("eval") or {}
     eval_last_days = int(eval_cfg.get("last_days", 90))
@@ -524,8 +532,18 @@ def main():
         pool_fit = _make_pool(df_fit, feature_order, cat_feats, y=df_fit[ycol])
         pool_es = _make_pool(df_es, feature_order, cat_feats, y=df_es[ycol])
 
-        model = CatBoostClassifier(**params)
-        log(f"[cb] fit start (iter={iterations} depth={depth} lr={lr} l2={params['l2_leaf_reg']} od_wait={od_wait})", step=True)
+        # Per-threshold overrides from hyperparam optimization (optional)
+        thr_override = (cfg.get("per_threshold_catboost") or {}).get(str(thr), {})
+        thr_params = {**params}
+        if thr_override:
+            for ovr_key in ("iterations", "depth", "learning_rate", "l2_leaf_reg", "od_wait",
+                            "bagging_temperature", "random_strength", "border_count",
+                            "min_data_in_leaf", "bootstrap_type", "subsample"):
+                if ovr_key in thr_override:
+                    thr_params[ovr_key] = thr_override[ovr_key]
+            log(f"[cb] using per-threshold overrides for thr={thr}: {thr_override}")
+        model = CatBoostClassifier(**thr_params)
+        log(f"[cb] fit start (iter={thr_params['iterations']} depth={thr_params['depth']} lr={thr_params['learning_rate']} l2={thr_params['l2_leaf_reg']} od_wait={thr_params['od_wait']})", step=True)
         model.fit(pool_fit, eval_set=pool_es, use_best_model=True)
         log(f"[cb] fit done", step=True)
 
@@ -610,35 +628,33 @@ def main():
         calibrators[thr] = cal
         registry[thr] = {"model_path": str(model_path), "cal_path": str(cal_path)}
 
+        # Free training objects between thresholds to avoid OOM
+        import gc as _gc
+        _gc.collect()
+        log(f"[gc] released threshold {thr} training objects")
+
     # Bin metadata — config-driven with defaults that mirror the dep trainer.
-    # bin_weights_minutes: representative delay (minutes) for each bin, used to
-    #   compute expected_delay_min = sum(P_bin * bin_weights_minutes).
-    # severity_weights: ordinal severity score (0=on-time, 4=severe).
-    bin_labels = ["< 15 min", "15-30 min", "30-45 min", "45-60 min", ">= 60 min"]
-    bin_weights_minutes = cfg.get("bin_weights_minutes", [7.5, 22.5, 37.5, 52.5, 75.0])
+    bin_labels = make_bin_labels(thresholds)
+    n_bins = len(thresholds) + 1
+    bin_weights_minutes = cfg.get("bin_weights_minutes", [7.5, 22.5, 45.0, 90.0, 150.0])
     severity_weights    = cfg.get("severity_weights",    [0.0,  1.0,  2.0,  3.0,  4.0])
     w_min = np.array(bin_weights_minutes, dtype=float)
     w_sev = np.array(severity_weights,    dtype=float)
-    if len(w_min) != 5 or len(w_sev) != 5:
-        raise ValueError("bin_weights_minutes and severity_weights must each have length 5.")
+    if len(w_min) != n_bins or len(w_sev) != n_bins:
+        raise ValueError(f"bin_weights_minutes and severity_weights must each have length {n_bins}.")
 
     # Write combined eval predictions (bins)
-    p_ge = []
+    p_ge_dict: Dict[int, np.ndarray] = {}
     for thr in thresholds:
-        p_ge.append(calibrators[thr].predict_proba(X_eval_df)[:, 1].astype(float))
-    p_ge = enforce_monotone_ge_probs(np.vstack(p_ge).T)
-    Pbins = ge_to_bins(p_ge[:, 0], p_ge[:, 1], p_ge[:, 2], p_ge[:, 3])
+        p_ge_dict[thr] = calibrators[thr].predict_proba(X_eval_df)[:, 1].astype(float)
+    Pbins = ge_to_bins(p_ge_dict, thresholds)
 
     df_eval_out = df_eval.copy()
-    df_eval_out["p_ge15"]     = p_ge[:, 0]
-    df_eval_out["p_ge30"]     = p_ge[:, 1]
-    df_eval_out["p_ge45"]     = p_ge[:, 2]
-    df_eval_out["p_ge60"]     = p_ge[:, 3]
-    df_eval_out["p_lt15"]     = Pbins[:, 0]
-    df_eval_out["p_15_30"]    = Pbins[:, 1]
-    df_eval_out["p_30_45"]    = Pbins[:, 2]
-    df_eval_out["p_45_60"]    = Pbins[:, 3]
-    df_eval_out["p_ge60_bin"] = Pbins[:, 4]
+    for i, thr in enumerate(thresholds):
+        df_eval_out[f"p_ge{thr}"] = p_ge_dict[thr]
+    for i, lbl in enumerate(bin_labels):
+        col = f"p_bin{i}_{lbl.replace(' ', '').replace('<','lt').replace('>=','ge')}"
+        df_eval_out[col] = Pbins[:, i]
     # Derived scalar summaries (mirrors dep trainer output)
     df_eval_out["expected_delay_min"] = Pbins @ w_min
     df_eval_out["severity_score"]     = Pbins @ w_sev

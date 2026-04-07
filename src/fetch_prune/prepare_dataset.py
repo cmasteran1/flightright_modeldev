@@ -232,6 +232,7 @@ def read_input_parquet(input_flights_path: List[str], cfg: Optional[dict] = None
         "NASDelay",
         "SecurityDelay",
         "LateAircraftDelay",
+        "Cancelled",
     }
 
     out_parts: List[pd.DataFrame] = []

@@ -1,0 +1,143 @@
+{
+  "_comment": "Blueprint: v9 departure delay feature pipeline. All 4 airlines, 2024-2025 data, v9 thresholds [15,30,60,120]. Run per airline by setting 'airlines' and 'airports_filter_csv'.",
+  "_workflow": {
+    "step_1": "python src/fetch_prune/prepare_dataset.py data/blueprint_dep_v9.json",
+    "step_2": "python src/fetch_prune/features_dep.py    data/blueprint_dep_v9.json"
+  },
+
+  "target": "dep",
+
+  "input_flights_path": [
+    "../flightrightdata/data/raw_bts/Year=2024/Month=01/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2024/Month=02/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2024/Month=03/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2024/Month=04/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2024/Month=05/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2024/Month=06/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2024/Month=07/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2024/Month=08/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2024/Month=09/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2024/Month=10/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2024/Month=11/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2024/Month=12/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2025/Month=01/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2025/Month=02/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2025/Month=03/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2025/Month=04/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2025/Month=05/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2025/Month=06/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2025/Month=07/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2025/Month=08/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2025/Month=09/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2025/Month=10/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2025/Month=11/flights.parquet"
+  ],
+  "history_flights_path": [
+    "../flightrightdata/data/raw_bts/Year=2023/Month=11/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2023/Month=12/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2024/Month=01/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2024/Month=02/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2024/Month=03/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2024/Month=04/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2024/Month=05/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2024/Month=06/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2024/Month=07/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2024/Month=08/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2024/Month=09/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2024/Month=10/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2024/Month=11/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2024/Month=12/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2025/Month=01/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2025/Month=02/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2025/Month=03/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2025/Month=04/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2025/Month=05/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2025/Month=06/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2025/Month=07/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2025/Month=08/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2025/Month=09/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2025/Month=10/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2025/Month=11/flights.parquet"
+  ],
+
+  "airports_csv":        "../flightrightdata/data/meta/airports.csv",
+  "airports_filter_csv": "../flightrightdata/data/meta/airport_rankings/WN_top_100.csv",
+  "airlines": ["WN"],
+  "start_date": "2024-01-01",
+  "end_date":   "2025-11-30",
+
+  "weather": {
+    "daily":              true,
+    "hourly_at_dep":      true,
+    "dest_daily":         false,
+    "dest_hourly_at_arr": false,
+    "cache_dir":            "../flightrightdata/weather_cache",
+    "hourly_cache_dir":     "../flightrightdata/weather_cache_hourly",
+    "historical_cache_dir": "../flightrightdata/weather_cache_historical"
+  },
+
+  "strike": {
+    "enabled":    true,
+    "cache_path": "../flightrightdata/strike_cache/us_aviation_labor_actions.parquet"
+  },
+
+  "add_aircraft_type": true,
+  "faa_registry": {
+    "master_path":  "../flightrightdata/data/meta/master.txt",
+    "acftref_path": "../flightrightdata/data/meta/acftref.txt"
+  },
+  "add_aircraft_age": false,
+
+  "history_lookback_days": 60,
+  "output_enriched_unbalanced_path": "data/intermediate/WN_v9_unbalanced.parquet",
+  "history_output_path":             "data/intermediate/history_pool_dep_WN_v9.parquet",
+
+  "features_dep": {
+    "holiday_windows": { "thanksgiving": 2, "christmas": 3 },
+    "n_recent_flightnum_od": 30,
+    "low_support_leq": 2,
+    "rolling_windows_days": [1, 7, 14],
+
+    "add_aircraft_type": true,
+    "faa_registry": {
+      "master_path":  "../flightrightdata/data/meta/master.txt",
+      "acftref_path": "../flightrightdata/data/meta/acftref.txt"
+    },
+
+    "hub_spillover": {
+      "airline": "WN",
+      "hubs": ["DEN", "PHX", "BWI", "MDW", "BNA"]
+    },
+    "hub_weather": { "enabled": false },
+    "tail_history": { "enabled": true },
+    "dest_rolling": { "enabled": true },
+    "prior_leg":    { "enabled": false },
+    "strike": {
+      "enabled": true,
+      "cache_path": "../flightrightdata/strike_cache/us_aviation_labor_actions.parquet"
+    }
+  },
+
+  "output_features_unbalanced_path": "data/processed/features_dep_WN_v9_unbalanced.parquet",
+
+  "balance": {
+    "thresholds": [15, 30, 60, 120],
+    "delay_col":  "DepDelayMinutes"
+  },
+
+  "feature_balance": {
+    "enabled": true,
+    "eval": {
+      "enabled":    true,
+      "by":         "random",
+      "eval_frac":  0.15,
+      "seed":       42,
+      "output_path": "data/processed/features_dep_WN_v9_eval_unbalanced.parquet"
+    },
+    "thresholds":      [15, 30, 60, 120],
+    "pos_frac":        0.50,
+    "seed":            42,
+    "max_rows":        1000000,
+    "output_template": "data/processed/train_dep_ge{thr}_balanced_WN_v9.parquet"
+  }
+}

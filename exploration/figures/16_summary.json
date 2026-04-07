@@ -1,0 +1,89 @@
+{
+  "airline": "WN",
+  "baseline_dep_auc": 0.76049,
+  "dep_results": [
+    {
+      "group": "ALL_tail_features",
+      "desc": "All tail/aircraft features combined",
+      "auc": 0.76601,
+      "delta_auc": 0.00551,
+      "delta_bp": 55.1,
+      "n_features_added": 11
+    },
+    {
+      "group": "has_recent_arrival_turn_5h",
+      "desc": "Binary: tail arrived within last 5h (quick-turn flag)",
+      "auc": 0.76246,
+      "delta_auc": 0.00197,
+      "delta_bp": 19.7,
+      "n_features_added": 1
+    },
+    {
+      "group": "aircraft_type",
+      "desc": "Aircraft model (737-7H4, 737-8, etc)",
+      "auc": 0.76143,
+      "delta_auc": 0.00094,
+      "delta_bp": 9.4,
+      "n_features_added": 1
+    },
+    {
+      "group": "turn_time_hours",
+      "desc": "Hours since this tail's previous arrival (turnaround time)",
+      "auc": 0.76132,
+      "delta_auc": 0.00083,
+      "delta_bp": 8.3,
+      "n_features_added": 1
+    },
+    {
+      "group": "tail_lateaircraft_history",
+      "desc": "Tail-specific late-aircraft rate (1/7/14d rolling)",
+      "auc": 0.75978,
+      "delta_auc": -0.00071,
+      "delta_bp": -7.1,
+      "n_features_added": 3
+    },
+    {
+      "group": "tail_depdelay_history",
+      "desc": "Tail-specific mean dep delay (1/7/14d rolling)",
+      "auc": 0.75955,
+      "delta_auc": -0.00095,
+      "delta_bp": -9.5,
+      "n_features_added": 3
+    },
+    {
+      "group": "tail_leg_num_day",
+      "desc": "Which leg of the day this tail is on (1st, 2nd, 3rd...)",
+      "auc": 0.75949,
+      "delta_auc": -0.001,
+      "delta_bp": -10.0,
+      "n_features_added": 1
+    },
+    {
+      "group": "Aircraft_Age_Bucket",
+      "desc": "Aircraft age bracket (0-5, 6-10, 11-15, 16+)",
+      "auc": 0.75932,
+      "delta_auc": -0.00117,
+      "delta_bp": -11.7,
+      "n_features_added": 1
+    }
+  ],
+  "terminal_analysis": {
+    "status": "NOT_IN_BTS_DATA",
+    "note": "BTS On-Time data does not include terminal or gate fields. If the new API provides origin_terminal and dest_terminal, these would need to be engineered from scratch. Terminal-level congestion features (departures per terminal per hour) could be powerful at hub airports where different terminals serve different routes/airlines. Cannot evaluate from historical data alone.",
+    "recommendation": "WORTH TESTING when available. At major hubs (ATL, ORD, DFW, DEN), terminal assignment correlates with operational patterns. Suggested features: terminal_congestion_3h, terminal_delay_rate_last7d, is_concourse_change (connection risk at dest)."
+  },
+  "cross_airline_aircraft_type": {
+    "AA": {
+      "n_aircraft_types": 24,
+      "delay_rate_spread_by_type": 0.1474
+    },
+    "DL": {
+      "n_aircraft_types": 37,
+      "delay_rate_spread_by_type": 0.2614
+    },
+    "UA": {
+      "n_aircraft_types": 30,
+      "delay_rate_spread_by_type": 0.344
+    }
+  }
+}

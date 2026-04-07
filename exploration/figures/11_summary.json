@@ -1,0 +1,609 @@
+{
+  "high_corr_pairs": [
+    {
+      "feat_a": "flightnum_od_depdelay_mean_last1",
+      "feat_b": "flightnum_od_depdelay_median_last1",
+      "r": 1.0
+    },
+    {
+      "feat_a": "flightnum_od_depdelay_mean_last7",
+      "feat_b": "flightnum_od_depdelay_mean_last14",
+      "r": 0.8516
+    },
+    {
+      "feat_a": "carrier_depdelay_mean_last1",
+      "feat_b": "carrier_lateaircraft_rate_last1",
+      "r": 0.9664
+    },
+    {
+      "feat_a": "carrier_depdelay_mean_last7",
+      "feat_b": "carrier_depdelay_mean_last14",
+      "r": 0.8715
+    },
+    {
+      "feat_a": "carrier_depdelay_mean_last7",
+      "feat_b": "carrier_lateaircraft_rate_last7",
+      "r": 0.9751
+    },
+    {
+      "feat_a": "carrier_depdelay_mean_last7",
+      "feat_b": "carrier_lateaircraft_rate_last14",
+      "r": 0.8571
+    },
+    {
+      "feat_a": "carrier_depdelay_mean_last7",
+      "feat_b": "hub_1_depdelay_mean_last7",
+      "r": 0.8582
+    },
+    {
+      "feat_a": "carrier_depdelay_mean_last7",
+      "feat_b": "hub_1_lateaircraft_rate_last7",
+      "r": 0.8692
+    },
+    {
+      "feat_a": "carrier_depdelay_mean_last7",
+      "feat_b": "hub_2_depdelay_mean_last7",
+      "r": 0.8618
+    },
+    {
+      "feat_a": "carrier_depdelay_mean_last7",
+      "feat_b": "hub_2_lateaircraft_rate_last7",
+      "r": 0.8707
+    },
+    {
+      "feat_a": "carrier_depdelay_mean_last7",
+      "feat_b": "hub_3_depdelay_mean_last7",
+      "r": 0.8664
+    },
+    {
+      "feat_a": "carrier_depdelay_mean_last7",
+      "feat_b": "hub_3_lateaircraft_rate_last7",
+      "r": 0.898
+    },
+    {
+      "feat_a": "carrier_depdelay_mean_last7",
+      "feat_b": "hub_4_depdelay_mean_last7",
+      "r": 0.895
+    },
+    {
+      "feat_a": "carrier_depdelay_mean_last7",
+      "feat_b": "hub_4_lateaircraft_rate_last7",
+      "r": 0.8952
+    },
+    {
+      "feat_a": "carrier_depdelay_mean_last14",
+      "feat_b": "carrier_lateaircraft_rate_last7",
+      "r": 0.873
+    },
+    {
+      "feat_a": "carrier_depdelay_mean_last14",
+      "feat_b": "carrier_lateaircraft_rate_last14",
+      "r": 0.9795
+    },
+    {
+      "feat_a": "carrier_depdelay_mean_last14",
+      "feat_b": "hub_1_depdelay_mean_last14",
+      "r": 0.8651
+    },
+    {
+      "feat_a": "carrier_depdelay_mean_last14",
+      "feat_b": "hub_1_lateaircraft_rate_last14",
+      "r": 0.8877
+    },
+    {
+      "feat_a": "carrier_depdelay_mean_last14",
+      "feat_b": "hub_2_depdelay_mean_last14",
+      "r": 0.8808
+    },
+    {
+      "feat_a": "carrier_depdelay_mean_last14",
+      "feat_b": "hub_2_lateaircraft_rate_last14",
+      "r": 0.8864
+    },
+    {
+      "feat_a": "carrier_depdelay_mean_last14",
+      "feat_b": "hub_3_depdelay_mean_last14",
+      "r": 0.8808
+    },
+    {
+      "feat_a": "carrier_depdelay_mean_last14",
+      "feat_b": "hub_3_lateaircraft_rate_last14",
+      "r": 0.926
+    },
+    {
+      "feat_a": "carrier_depdelay_mean_last14",
+      "feat_b": "hub_4_depdelay_mean_last14",
+      "r": 0.9102
+    },
+    {
+      "feat_a": "carrier_depdelay_mean_last14",
+      "feat_b": "hub_4_lateaircraft_rate_last14",
+      "r": 0.9213
+    },
+    {
+      "feat_a": "carrier_origin_depdelay_mean_last7",
+      "feat_b": "origin_depdelay_mean_last7",
+      "r": 0.875
+    },
+    {
+      "feat_a": "carrier_origin_depdelay_mean_last7",
+      "feat_b": "origin_lateaircraft_rate_last7",
+      "r": 0.861
+    },
+    {
+      "feat_a": "carrier_origin_depdelay_mean_last14",
+      "feat_b": "origin_depdelay_mean_last14",
+      "r": 0.8854
+    },
+    {
+      "feat_a": "carrier_origin_depdelay_mean_last14",
+      "feat_b": "origin_lateaircraft_rate_last14",
+      "r": 0.8651
+    },
+    {
+      "feat_a": "origin_depdelay_mean_last1",
+      "feat_b": "origin_lateaircraft_rate_last1",
+      "r": 0.8517
+    },
+    {
+      "feat_a": "origin_depdelay_mean_last7",
+      "feat_b": "origin_depdelay_mean_last14",
+      "r": 0.853
+    },
+    {
+      "feat_a": "origin_depdelay_mean_last7",
+      "feat_b": "origin_lateaircraft_rate_last7",
+      "r": 0.8842
+    },
+    {
+      "feat_a": "origin_depdelay_mean_last14",
+      "feat_b": "origin_lateaircraft_rate_last14",
+      "r": 0.8802
+    },
+    {
+      "feat_a": "origin_lateaircraft_rate_last7",
+      "feat_b": "origin_lateaircraft_rate_last14",
+      "r": 0.8834
+    },
+    {
+      "feat_a": "carrier_lateaircraft_rate_last1",
+      "feat_b": "hub_1_lateaircraft_rate_last1",
+      "r": 0.8641
+    },
+    {
+      "feat_a": "carrier_lateaircraft_rate_last7",
+      "feat_b": "carrier_lateaircraft_rate_last14",
+      "r": 0.8904
+    },
+    {
+      "feat_a": "carrier_lateaircraft_rate_last7",
+      "feat_b": "hub_1_depdelay_mean_last7",
+      "r": 0.8585
+    },
+    {
+      "feat_a": "carrier_lateaircraft_rate_last7",
+      "feat_b": "hub_1_lateaircraft_rate_last7",
+      "r": 0.9043
+    },
+    {
+      "feat_a": "carrier_lateaircraft_rate_last7",
+      "feat_b": "hub_2_lateaircraft_rate_last7",
+      "r": 0.8834
+    },
+    {
+      "feat_a": "carrier_lateaircraft_rate_last7",
+      "feat_b": "hub_3_depdelay_mean_last7",
+      "r": 0.853
+    },
+    {
+      "feat_a": "carrier_lateaircraft_rate_last7",
+      "feat_b": "hub_3_lateaircraft_rate_last7",
+      "r": 0.9152
+    },
+    {
+      "feat_a": "carrier_lateaircraft_rate_last7",
+      "feat_b": "hub_4_depdelay_mean_last7",
+      "r": 0.89
+    },
+    {
+      "feat_a": "carrier_lateaircraft_rate_last7",
+      "feat_b": "hub_4_lateaircraft_rate_last7",
+      "r": 0.9099
+    },
+    {
+      "feat_a": "carrier_lateaircraft_rate_last14",
+      "feat_b": "hub_1_depdelay_mean_last14",
+      "r": 0.8757
+    },
+    {
+      "feat_a": "carrier_lateaircraft_rate_last14",
+      "feat_b": "hub_1_lateaircraft_rate_last14",
+      "r": 0.9228
+    },
+    {
+      "feat_a": "carrier_lateaircraft_rate_last14",
+      "feat_b": "hub_2_depdelay_mean_last14",
+      "r": 0.8643
+    },
+    {
+      "feat_a": "carrier_lateaircraft_rate_last14",
+      "feat_b": "hub_2_lateaircraft_rate_last14",
+      "r": 0.9019
+    },
+    {
+      "feat_a": "carrier_lateaircraft_rate_last14",
+      "feat_b": "hub_3_depdelay_mean_last14",
+      "r": 0.8675
+    },
+    {
+      "feat_a": "carrier_lateaircraft_rate_last14",
+      "feat_b": "hub_3_lateaircraft_rate_last7",
+      "r": 0.8606
+    },
+    {
+      "feat_a": "carrier_lateaircraft_rate_last14",
+      "feat_b": "hub_3_lateaircraft_rate_last14",
+      "r": 0.94
+    },
+    {
+      "feat_a": "carrier_lateaircraft_rate_last14",
+      "feat_b": "hub_4_depdelay_mean_last14",
+      "r": 0.898
+    },
+    {
+      "feat_a": "carrier_lateaircraft_rate_last14",
+      "feat_b": "hub_4_lateaircraft_rate_last14",
+      "r": 0.9233
+    },
+    {
+      "feat_a": "hub_0_depdelay_mean_last1",
+      "feat_b": "hub_0_lateaircraft_rate_last1",
+      "r": 0.9543
+    },
+    {
+      "feat_a": "hub_0_depdelay_mean_last7",
+      "feat_b": "hub_0_depdelay_mean_last14",
+      "r": 0.8524
+    },
+    {
+      "feat_a": "hub_0_depdelay_mean_last7",
+      "feat_b": "hub_0_lateaircraft_rate_last7",
+      "r": 0.97
+    },
+    {
+      "feat_a": "hub_0_depdelay_mean_last14",
+      "feat_b": "hub_0_lateaircraft_rate_last14",
+      "r": 0.9701
+    },
+    {
+      "feat_a": "hub_0_lateaircraft_rate_last7",
+      "feat_b": "hub_0_lateaircraft_rate_last14",
+      "r": 0.8549
+    },
+    {
+      "feat_a": "hub_1_depdelay_mean_last1",
+      "feat_b": "hub_1_lateaircraft_rate_last1",
+      "r": 0.9266
+    },
+    {
+      "feat_a": "hub_1_depdelay_mean_last7",
+      "feat_b": "hub_1_lateaircraft_rate_last7",
+      "r": 0.9438
+    },
+    {
+      "feat_a": "hub_1_depdelay_mean_last14",
+      "feat_b": "hub_1_lateaircraft_rate_last14",
+      "r": 0.9368
+    },
+    {
+      "feat_a": "hub_1_lateaircraft_rate_last7",
+      "feat_b": "hub_1_lateaircraft_rate_last14",
+      "r": 0.879
+    },
+    {
+      "feat_a": "hub_1_lateaircraft_rate_last14",
+      "feat_b": "hub_2_lateaircraft_rate_last14",
+      "r": 0.8542
+    },
+    {
+      "feat_a": "hub_1_lateaircraft_rate_last14",
+      "feat_b": "hub_3_lateaircraft_rate_last14",
+      "r": 0.8702
+    },
+    {
+      "feat_a": "hub_1_lateaircraft_rate_last14",
+      "feat_b": "hub_4_lateaircraft_rate_last14",
+      "r": 0.8653
+    },
+    {
+      "feat_a": "hub_2_depdelay_mean_last1",
+      "feat_b": "hub_2_lateaircraft_rate_last1",
+      "r": 0.9311
+    },
+    {
+      "feat_a": "hub_2_depdelay_mean_last7",
+      "feat_b": "hub_2_lateaircraft_rate_last7",
+      "r": 0.948
+    },
+    {
+      "feat_a": "hub_2_depdelay_mean_last7",
+      "feat_b": "hub_3_depdelay_mean_last7",
+      "r": 0.8626
+    },
+    {
+      "feat_a": "hub_2_depdelay_mean_last7",
+      "feat_b": "hub_3_lateaircraft_rate_last7",
+      "r": 0.8648
+    },
+    {
+      "feat_a": "hub_2_depdelay_mean_last7",
+      "feat_b": "hub_4_depdelay_mean_last7",
+      "r": 0.8584
+    },
+    {
+      "feat_a": "hub_2_depdelay_mean_last14",
+      "feat_b": "hub_2_lateaircraft_rate_last14",
+      "r": 0.9486
+    },
+    {
+      "feat_a": "hub_2_depdelay_mean_last14",
+      "feat_b": "hub_3_depdelay_mean_last14",
+      "r": 0.8884
+    },
+    {
+      "feat_a": "hub_2_depdelay_mean_last14",
+      "feat_b": "hub_3_lateaircraft_rate_last14",
+      "r": 0.9007
+    },
+    {
+      "feat_a": "hub_2_depdelay_mean_last14",
+      "feat_b": "hub_4_depdelay_mean_last14",
+      "r": 0.8788
+    },
+    {
+      "feat_a": "hub_2_depdelay_mean_last14",
+      "feat_b": "hub_4_lateaircraft_rate_last14",
+      "r": 0.8553
+    },
+    {
+      "feat_a": "hub_2_lateaircraft_rate_last7",
+      "feat_b": "hub_2_lateaircraft_rate_last14",
+      "r": 0.8895
+    },
+    {
+      "feat_a": "hub_2_lateaircraft_rate_last7",
+      "feat_b": "hub_3_depdelay_mean_last7",
+      "r": 0.8657
+    },
+    {
+      "feat_a": "hub_2_lateaircraft_rate_last7",
+      "feat_b": "hub_3_lateaircraft_rate_last7",
+      "r": 0.8981
+    },
+    {
+      "feat_a": "hub_2_lateaircraft_rate_last7",
+      "feat_b": "hub_4_depdelay_mean_last7",
+      "r": 0.8691
+    },
+    {
+      "feat_a": "hub_2_lateaircraft_rate_last7",
+      "feat_b": "hub_4_lateaircraft_rate_last7",
+      "r": 0.8738
+    },
+    {
+      "feat_a": "hub_2_lateaircraft_rate_last14",
+      "feat_b": "hub_3_depdelay_mean_last14",
+      "r": 0.8865
+    },
+    {
+      "feat_a": "hub_2_lateaircraft_rate_last14",
+      "feat_b": "hub_3_lateaircraft_rate_last14",
+      "r": 0.9249
+    },
+    {
+      "feat_a": "hub_2_lateaircraft_rate_last14",
+      "feat_b": "hub_4_depdelay_mean_last14",
+      "r": 0.8713
+    },
+    {
+      "feat_a": "hub_2_lateaircraft_rate_last14",
+      "feat_b": "hub_4_lateaircraft_rate_last14",
+      "r": 0.8735
+    },
+    {
+      "feat_a": "hub_3_depdelay_mean_last1",
+      "feat_b": "hub_3_lateaircraft_rate_last1",
+      "r": 0.9308
+    },
+    {
+      "feat_a": "hub_3_depdelay_mean_last7",
+      "feat_b": "hub_3_lateaircraft_rate_last7",
+      "r": 0.9543
+    },
+    {
+      "feat_a": "hub_3_depdelay_mean_last7",
+      "feat_b": "hub_4_depdelay_mean_last7",
+      "r": 0.8571
+    },
+    {
+      "feat_a": "hub_3_depdelay_mean_last14",
+      "feat_b": "hub_3_lateaircraft_rate_last14",
+      "r": 0.9502
+    },
+    {
+      "feat_a": "hub_3_depdelay_mean_last14",
+      "feat_b": "hub_4_depdelay_mean_last14",
+      "r": 0.8757
+    },
+    {
+      "feat_a": "hub_3_depdelay_mean_last14",
+      "feat_b": "hub_4_lateaircraft_rate_last14",
+      "r": 0.8504
+    },
+    {
+      "feat_a": "hub_3_lateaircraft_rate_last7",
+      "feat_b": "hub_3_lateaircraft_rate_last14",
+      "r": 0.8946
+    },
+    {
+      "feat_a": "hub_3_lateaircraft_rate_last7",
+      "feat_b": "hub_4_depdelay_mean_last7",
+      "r": 0.8798
+    },
+    {
+      "feat_a": "hub_3_lateaircraft_rate_last7",
+      "feat_b": "hub_4_lateaircraft_rate_last7",
+      "r": 0.8798
+    },
+    {
+      "feat_a": "hub_3_lateaircraft_rate_last14",
+      "feat_b": "hub_4_depdelay_mean_last14",
+      "r": 0.8943
+    },
+    {
+      "feat_a": "hub_3_lateaircraft_rate_last14",
+      "feat_b": "hub_4_lateaircraft_rate_last14",
+      "r": 0.8955
+    },
+    {
+      "feat_a": "hub_4_depdelay_mean_last1",
+      "feat_b": "hub_4_lateaircraft_rate_last1",
+      "r": 0.9129
+    },
+    {
+      "feat_a": "hub_4_depdelay_mean_last7",
+      "feat_b": "hub_4_depdelay_mean_last14",
+      "r": 0.856
+    },
+    {
+      "feat_a": "hub_4_depdelay_mean_last7",
+      "feat_b": "hub_4_lateaircraft_rate_last7",
+      "r": 0.9618
+    },
+    {
+      "feat_a": "hub_4_depdelay_mean_last7",
+      "feat_b": "hub_4_lateaircraft_rate_last14",
+      "r": 0.8562
+    },
+    {
+      "feat_a": "hub_4_depdelay_mean_last14",
+      "feat_b": "hub_4_lateaircraft_rate_last14",
+      "r": 0.9693
+    },
+    {
+      "feat_a": "hub_4_lateaircraft_rate_last7",
+      "feat_b": "hub_4_lateaircraft_rate_last14",
+      "r": 0.8854
+    },
+    {
+      "feat_a": "dest_depdelay_mean_last1",
+      "feat_b": "dest_lateaircraft_rate_last1",
+      "r": 0.8559
+    },
+    {
+      "feat_a": "dest_depdelay_mean_last7",
+      "feat_b": "dest_depdelay_mean_last14",
+      "r": 0.8531
+    },
+    {
+      "feat_a": "dest_depdelay_mean_last7",
+      "feat_b": "dest_lateaircraft_rate_last7",
+      "r": 0.8921
+    },
+    {
+      "feat_a": "dest_depdelay_mean_last14",
+      "feat_b": "dest_lateaircraft_rate_last14",
+      "r": 0.8903
+    },
+    {
+      "feat_a": "dest_lateaircraft_rate_last7",
+      "feat_b": "dest_lateaircraft_rate_last14",
+      "r": 0.879
+    },
+    {
+      "feat_a": "sched_dep_hour",
+      "feat_b": "CRSDepTime",
+      "r": 0.9704
+    },
+    {
+      "feat_a": "CRSElapsedTime",
+      "feat_b": "Distance",
+      "r": 0.9819
+    },
+    {
+      "feat_a": "origin_temp_max_K",
+      "feat_b": "origin_temp_min_K",
+      "r": 0.9034
+    },
+    {
+      "feat_a": "origin_temp_max_K",
+      "feat_b": "origin_dep_temp_K",
+      "r": 0.8951
+    },
+    {
+      "feat_a": "origin_temp_min_K",
+      "feat_b": "origin_dep_temp_K",
+      "r": 0.8718
+    },
+    {
+      "feat_a": "origin_daily_windspeed_max_kmh",
+      "feat_b": "origin_daily_windgusts_max_kmh",
+      "r": 0.8895
+    },
+    {
+      "feat_a": "origin_dep_windspeed_kmh",
+      "feat_b": "origin_dep_windgusts_kmh",
+      "r": 0.888
+    },
+    {
+      "feat_a": "origin_dep_cape_jkg",
+      "feat_b": "origin_dep_log1p_cape",
+      "r": 1.0
+    }
+  ],
+  "rolling_groups": {
+    "flightnum_od_depdelay": {
+      "min_r": 0.5,
+      "features": [
+        "flightnum_od_depdelay_mean_last1",
+        "flightnum_od_depdelay_mean_last7",
+        "flightnum_od_depdelay_mean_last14",
+        "flightnum_od_depdelay_median_last1",
+        "flightnum_od_depdelay_median_last7",
+        "flightnum_od_depdelay_median_last14"
+      ]
+    },
+    "carrier_depdelay": {
+      "min_r": 0.549,
+      "features": [
+        "carrier_depdelay_mean_last1",
+        "carrier_depdelay_mean_last7",
+        "carrier_depdelay_mean_last14"
+      ]
+    },
+    "carrier_origin": {
+      "min_r": 0.49,
+      "features": [
+        "carrier_origin_depdelay_mean_last1",
+        "carrier_origin_depdelay_mean_last7",
+        "carrier_origin_depdelay_mean_last14"
+      ]
+    },
+    "origin_depdelay": {
+      "min_r": 0.509,
+      "features": [
+        "origin_depdelay_mean_last1",
+        "origin_depdelay_mean_last7",
+        "origin_depdelay_mean_last14"
+      ]
+    },
+    "origin_lateaircraft": {
+      "min_r": 0.542,
+      "features": [
+        "origin_lateaircraft_rate_last1",
+        "origin_lateaircraft_rate_last7",
+        "origin_lateaircraft_rate_last14"
+      ]
+    }
+  }
+}

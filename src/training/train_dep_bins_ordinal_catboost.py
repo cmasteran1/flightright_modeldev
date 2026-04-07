@@ -153,29 +153,30 @@ def enforce_monotone_ge_probs(p_ge: np.ndarray) -> np.ndarray:
         p[:, j] = np.minimum(p[:, j], p[:, j-1])
     return p
 
-def ge_to_bins(p_ge15, p_ge30, p_ge45, p_ge60):
-    p_ge = enforce_monotone_ge_probs(np.vstack([p_ge15, p_ge30, p_ge45, p_ge60]).T)
-    p15, p30, p45, p60 = p_ge[:, 0], p_ge[:, 1], p_ge[:, 2], p_ge[:, 3]
+def make_bin_labels(thresholds: List[int]) -> List[str]:
+    labels = [f"< {thresholds[0]} min"]
+    for i in range(len(thresholds) - 1):
+        labels.append(f"{thresholds[i]}-{thresholds[i+1]} min")
+    labels.append(f">= {thresholds[-1]} min")
+    return labels
 
-    p_lt15  = 1.0 - p15
-    p_15_30 = np.maximum(0.0, p15 - p30)
-    p_30_45 = np.maximum(0.0, p30 - p45)
-    p_45_60 = np.maximum(0.0, p45 - p60)
-    p_ge60  = np.maximum(0.0, p60)
-
-    P = np.vstack([p_lt15, p_15_30, p_30_45, p_45_60, p_ge60]).T
+def ge_to_bins(p_ge_dict: Dict[int, np.ndarray], thresholds: List[int]) -> np.ndarray:
+    p_ge = enforce_monotone_ge_probs(
+        np.vstack([p_ge_dict[t] for t in thresholds]).T
+    )
+    bins = [1.0 - p_ge[:, 0]]
+    for j in range(len(thresholds) - 1):
+        bins.append(np.maximum(0.0, p_ge[:, j] - p_ge[:, j + 1]))
+    bins.append(np.maximum(0.0, p_ge[:, -1]))
+    P = np.vstack(bins).T
     Z = P.sum(axis=1, keepdims=True)
     Z[Z == 0] = 1.0
     return P / Z
 
-def true_bin_from_delay(dep_delay_min: pd.Series) -> pd.Series:
-    d = pd.to_numeric(dep_delay_min, errors="coerce").fillna(0.0)
-    bins = pd.cut(
-        d,
-        bins=[-np.inf, 15, 30, 45, 60, np.inf],
-        labels=["< 15 min", "15-30 min", "30-45 min", "45-60 min", ">= 60 min"],
-        right=False
-    )
+def true_bin_from_delay(delay_min: pd.Series, thresholds: List[int], bin_labels: List[str]) -> pd.Series:
+    d = pd.to_numeric(delay_min, errors="coerce").fillna(0.0)
+    edges = [-np.inf] + [float(t) for t in thresholds] + [np.inf]
+    bins = pd.cut(d, bins=edges, labels=bin_labels, right=False)
     return bins.astype("object")
 
 def make_reason_row(row) -> str:
@@ -232,12 +233,12 @@ def make_reason_row(row) -> str:
         return "no strong delay signals detected"
     return "; ".join(reasons[:3])
 
-def fmt_probs(p_ge15, p_ge30, p_ge45, p_ge60) -> str:
+def fmt_probs(p_ge_values: Dict[int, float], thresholds: List[int]) -> str:
     def f(x):
         if x is None or (isinstance(x, float) and np.isnan(x)):
             return "nan"
         return f"{float(x):.3f}"
-    return f"P>=15={f(p_ge15)}, P>=30={f(p_ge30)}, P>=45={f(p_ge45)}, P>=60={f(p_ge60)}"
+    return ", ".join(f"P>={t}={f(p_ge_values[t])}" for t in thresholds)
 
 def _split_unbalanced_for_cal_and_eval(df_unbal: pd.DataFrame, *, cal_size: float, seed: int):
     if len(df_unbal) < 20:
@@ -342,7 +343,7 @@ def main():
     OUTDIR.mkdir(parents=True, exist_ok=True)
 
     cfg = {
-        "thresholds": [15, 30, 45, 60],
+        "thresholds": [15, 30, 60, 120],
         "reliability_bins": 10,
         "iterations": 4000,
         "learning_rate": 0.03,
@@ -381,7 +382,7 @@ def main():
         "prediction_samples_n": 500,
 
         # Weights for deployable outputs (optional)
-        "bin_weights_minutes": [7.5, 22.5, 37.5, 52.5, 75.0],
+        "bin_weights_minutes": [7.5, 22.5, 45.0, 90.0, 150.0],
         "severity_weights": [0.0, 1.0, 2.0, 3.0, 4.0],
 
         # Pattern B: save a PLAIN-DICT joblib (no custom classes)
@@ -398,12 +399,11 @@ def main():
         cfg["learning_rate"] = max(float(cfg.get("learning_rate", 0.03)), 0.05)
         log("[FAST] using lighter CatBoost settings")
 
-    THRESHOLDS = [int(x) for x in cfg.get("thresholds", [15, 30, 45, 60])]
+    THRESHOLDS = [int(x) for x in cfg.get("thresholds", [15, 30, 60, 120])]
     REL_BINS = int(cfg.get("reliability_bins", 10))
     SEED = int(cfg.get("random_seed", 42))
 
-    # Fixed labels for bins (5 bins)
-    bin_labels = ["< 15 min", "15-30 min", "30-45 min", "45-60 min", ">= 60 min"]
+    bin_labels = make_bin_labels(THRESHOLDS)
 
     log(f"Loading data: {INPUT}")
     df_all = pd.read_parquet(INPUT)
@@ -535,13 +535,20 @@ def main():
         train_pool = Pool(X_train, y_train, cat_features=cat_idx)
         es_pool    = Pool(X_es,    y_es,    cat_features=cat_idx)
 
-        iters = int(cfg.get("iterations", 4000))
-        depth = int(cfg.get("depth", 8))
-        lr = float(cfg.get("learning_rate", 0.03))
-        l2 = float(cfg.get("l2_leaf_reg", 5.0))
-        od_wait = int(cfg.get("od_wait", 200))
+        # Per-threshold overrides from hyperparam optimization (optional)
+        thr_override = (cfg.get("per_threshold_catboost") or {}).get(str(thr), {})
+        iters = int(thr_override.get("iterations", cfg.get("iterations", 4000)))
+        depth = int(thr_override.get("depth", cfg.get("depth", 8)))
+        lr = float(thr_override.get("learning_rate", cfg.get("learning_rate", 0.03)))
+        l2 = float(thr_override.get("l2_leaf_reg", cfg.get("l2_leaf_reg", 5.0)))
+        od_wait = int(thr_override.get("od_wait", cfg.get("od_wait", 200)))
 
         log(f"[cb] fit start (iter={iters} depth={depth} lr={lr} l2={l2} od_wait={od_wait})")
+        cb_extra = {}
+        for extra_key in ("bagging_temperature", "random_strength", "border_count",
+                          "min_data_in_leaf", "bootstrap_type", "subsample"):
+            if extra_key in thr_override:
+                cb_extra[extra_key] = thr_override[extra_key]
         clf = CatBoostClassifier(
             loss_function="Logloss",
             eval_metric="AUC",
@@ -554,6 +561,7 @@ def main():
             od_type="Iter",
             od_wait=od_wait,
             thread_count=-1,
+            **cb_extra,
         )
         clf.fit(train_pool, eval_set=es_pool, use_best_model=True)
         log("[cb] fit done")
@@ -652,6 +660,15 @@ def main():
             "cal_path": str(cal_path),
         }
 
+        # Free memory between thresholds
+        clf = None
+        X_train = y_train = X_es = y_es = None
+        if per_thr_paths:
+            df_tr = df_train = df_es = df_test = None
+        import gc as _gc
+        _gc.collect()
+        log(f"[gc] released threshold {thr} training objects")
+
     # ------------------------------
     # Multi-bin eval + save samples
     # ------------------------------
@@ -660,18 +677,18 @@ def main():
     X_eval = build_X(df_eval)
     dep_delay = pd.to_numeric(df_eval.get("DepDelayMinutes"), errors="coerce").fillna(0.0)
     df_eval = df_eval.copy()
-    df_eval["true_bin"] = true_bin_from_delay(dep_delay)
+    df_eval["true_bin"] = true_bin_from_delay(dep_delay, THRESHOLDS, bin_labels)
 
     p_ge: Dict[int, np.ndarray] = {}
     for thr in THRESHOLDS:
         cal = calibrators_inmem[thr]
         p_ge[thr] = cal.predict_proba(X_eval)[:, 1].astype(float)
 
-    # Convert to 5-bin distribution
+    # Convert to N+1 bin distribution
     if len(THRESHOLDS) != 4:
-        raise ValueError("This script currently expects exactly 4 thresholds (e.g., 15/30/45/60).")
+        raise ValueError("This script currently expects exactly 4 thresholds.")
 
-    P = ge_to_bins(p_ge[THRESHOLDS[0]], p_ge[THRESHOLDS[1]], p_ge[THRESHOLDS[2]], p_ge[THRESHOLDS[3]])
+    P = ge_to_bins(p_ge, THRESHOLDS)
     pred_idx = np.argmax(P, axis=1)
     df_eval["pred_bin"] = pd.Series([bin_labels[i] for i in pred_idx], index=df_eval.index)
 
@@ -685,24 +702,25 @@ def main():
     log(f"[BINS] UNBAL eval logloss={ll:.4f}  acc={acc:.4f}")
 
     df_eval["reason"] = df_eval.apply(make_reason_row, axis=1)
-    df_eval["p_lt15"]  = P[:, 0]
-    df_eval["p_15_30"] = P[:, 1]
-    df_eval["p_30_45"] = P[:, 2]
-    df_eval["p_45_60"] = P[:, 3]
-    df_eval["p_ge60"]  = P[:, 4]
-    df_eval["p_ge15"] = p_ge[THRESHOLDS[0]]
-    df_eval["p_ge30"] = p_ge[THRESHOLDS[1]]
-    df_eval["p_ge45"] = p_ge[THRESHOLDS[2]]
-    df_eval["p_ge60_raw"] = p_ge[THRESHOLDS[3]]
+
+    # Dynamic bin probability columns
+    for i, lbl in enumerate(bin_labels):
+        col = f"p_bin{i}_{lbl.replace(' ', '').replace('<','lt').replace('>=','ge')}"
+        df_eval[col] = P[:, i]
+
+    # Per-threshold cumulative probability columns
+    for thr in THRESHOLDS:
+        df_eval[f"p_ge{thr}"] = p_ge[thr]
 
     # Weighted summaries (minutes + severity)
-    bin_weights_minutes = cfg.get("bin_weights_minutes", [7.5, 22.5, 37.5, 52.5, 75.0])
+    n_bins = len(THRESHOLDS) + 1
+    bin_weights_minutes = cfg.get("bin_weights_minutes", [7.5, 22.5, 45.0, 90.0, 150.0])
     severity_weights = cfg.get("severity_weights", [0.0, 1.0, 2.0, 3.0, 4.0])
 
     w_min = np.array(bin_weights_minutes, dtype=float)
     w_sev = np.array(severity_weights, dtype=float)
-    if w_min.shape[0] != 5 or w_sev.shape[0] != 5:
-        raise ValueError("bin_weights_minutes and severity_weights must each be length 5.")
+    if w_min.shape[0] != n_bins or w_sev.shape[0] != n_bins:
+        raise ValueError(f"bin_weights_minutes and severity_weights must each be length {n_bins}.")
 
     df_eval["expected_delay_minutes"] = (P * w_min[None, :]).sum(axis=1)
     df_eval["severity_score"] = (P * w_sev[None, :]).sum(axis=1)
@@ -710,9 +728,8 @@ def main():
     df_eval["predicted_delay_bin"] = df_eval["pred_bin"]
     df_eval["delay_explanation"] = df_eval["reason"]
     df_eval["delay_probabilities"] = [
-        fmt_probs(a, b, c, d) for a, b, c, d in zip(
-            df_eval["p_ge15"], df_eval["p_ge30"], df_eval["p_ge45"], df_eval["p_ge60_raw"]
-        )
+        fmt_probs({t: float(row[f"p_ge{t}"]) for t in THRESHOLDS}, THRESHOLDS)
+        for _, row in df_eval.iterrows()
     ]
 
     sample_n = int(cfg.get("prediction_samples_n", 500))

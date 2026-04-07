@@ -1,0 +1,96 @@
+{
+  "seasonal_correlations": {
+    "Winter": {
+      "temp_max_K": -0.042,
+      "temp_min_K": -0.0187,
+      "daily_precip_sum_mm": 0.0926,
+      "daily_windspeed_max_kmh": 0.0548,
+      "daily_windgusts_max_kmh": 0.0514,
+      "dep_temp_K": 0.0265,
+      "dep_precip_mm": 0.0811,
+      "dep_windspeed_kmh": 0.0552,
+      "dep_windgusts_kmh": 0.0778,
+      "dep_visibility_m": 0.0009,
+      "dep_cape_jkg": 0.0763,
+      "dep_log1p_cape": 0.0763,
+      "dep_cloudcover_pct": 0.0478
+    },
+    "Spring": {
+      "temp_max_K": 0.0131,
+      "temp_min_K": 0.0481,
+      "daily_precip_sum_mm": 0.1,
+      "daily_windspeed_max_kmh": 0.0575,
+      "daily_windgusts_max_kmh": 0.0493,
+      "dep_temp_K": 0.1113,
+      "dep_precip_mm": 0.0826,
+      "dep_windspeed_kmh": 0.0944,
+      "dep_windgusts_kmh": 0.128,
+      "dep_visibility_m": 0.0328,
+      "dep_cape_jkg": 0.1098,
+      "dep_log1p_cape": 0.1098,
+      "dep_cloudcover_pct": 0.047
+    },
+    "Summer": {
+      "temp_max_K": -0.0024,
+      "temp_min_K": 0.0251,
+      "daily_precip_sum_mm": 0.0762,
+      "daily_windspeed_max_kmh": 0.0091,
+      "daily_windgusts_max_kmh": 0.0157,
+      "dep_temp_K": 0.1399,
+      "dep_precip_mm": 0.0823,
+      "dep_windspeed_kmh": 0.0943,
+      "dep_windgusts_kmh": 0.1501,
+      "dep_visibility_m": 0.1011,
+      "dep_cape_jkg": 0.0732,
+      "dep_log1p_cape": 0.0732,
+      "dep_cloudcover_pct": 0.0764
+    },
+    "Fall": {
+      "temp_max_K": -0.0105,
+      "temp_min_K": 0.0026,
+      "daily_precip_sum_mm": 0.0376,
+      "daily_windspeed_max_kmh": -0.0015,
+      "daily_windgusts_max_kmh": 0.0215,
+      "dep_temp_K": 0.0822,
+      "dep_precip_mm": 0.0409,
+      "dep_windspeed_kmh": 0.037,
+      "dep_windgusts_kmh": 0.0895,
+      "dep_visibility_m": 0.0716,
+      "dep_cape_jkg": 0.0414,
+      "dep_log1p_cape": 0.0414,
+      "dep_cloudcover_pct": 0.0227
+    }
+  },
+  "regional_slopes": {
+    "Northeast": {
+      "daily_precip_sum_mm": 8.503,
+      "dep_windspeed_kmh": 3.418,
+      "dep_visibility_m": 0.002,
+      "dep_cape_jkg": 0.148
+    },
+    "Southeast": {
+      "daily_precip_sum_mm": 7.448,
+      "dep_windspeed_kmh": 4.314,
+      "dep_visibility_m": 0.005,
+      "dep_cape_jkg": 0.046
+    },
+    "Midwest": {
+      "daily_precip_sum_mm": 6.752,
+      "dep_windspeed_kmh": 1.832,
+      "dep_visibility_m": 0.004,
+      "dep_cape_jkg": 0.07
+    },
+    "Southwest": {
+      "daily_precip_sum_mm": 12.406,
+      "dep_windspeed_kmh": 4.47,
+      "dep_visibility_m": 0.004,
+      "dep_cape_jkg": 0.032
+    },
+    "West": {
+      "daily_precip_sum_mm": 27.674,
+      "dep_windspeed_kmh": 10.262,
+      "dep_visibility_m": 0.005,
+      "dep_cape_jkg": 0.842
+    }
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "weather_only_auc": 0.6691,
+  "feature_importance": {
+    "dep_hour_weathercode": 0.46,
+    "dep_precip_mm": 1.39,
+    "daily_weathercode": 1.64,
+    "dep_cloudcover_pct": 2.36,
+    "dep_windspeed_kmh": 2.62,
+    "dep_log1p_cape": 2.93,
+    "dep_cape_jkg": 2.96,
+    "daily_windspeed_max_kmh": 4.05,
+    "daily_windgusts_max_kmh": 4.18,
+    "daily_precip_sum_mm": 7.09,
+    "dep_windgusts_kmh": 7.97,
+    "dep_visibility_m": 10.09,
+    "temp_min_K": 12.07,
+    "temp_max_K": 14.93,
+    "dep_temp_K": 25.27
+  },
+  "shap_importance": {
+    "dep_hour_weathercode": 0.00738,
+    "daily_weathercode": 0.02439,
+    "daily_windspeed_max_kmh": 0.0251,
+    "daily_windgusts_max_kmh": 0.02519,
+    "dep_precip_mm": 0.02734,
+    "dep_windspeed_kmh": 0.0526,
+    "dep_cape_jkg": 0.05557,
+    "dep_cloudcover_pct": 0.05711,
+    "dep_log1p_cape": 0.06779,
+    "dep_visibility_m": 0.09865,
+    "dep_windgusts_kmh": 0.10318,
+    "daily_precip_sum_mm": 0.14174,
+    "temp_max_K": 0.21853,
+    "temp_min_K": 0.27559,
+    "dep_temp_K": 0.62364
+  }
+}

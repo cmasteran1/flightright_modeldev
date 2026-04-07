@@ -1,0 +1,6 @@
+So far we have noticed that:
+building a model unique to each airline is useful.
+historical flight performance is a valuable feature.
+daily and hourly weather is available from open-meteo.
+The BTS database is a great resource for obtaining historical flight training data from multiple months ago.
+Separating departure and arrival features and training. (see src for current workflow)

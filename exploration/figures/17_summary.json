@@ -1,0 +1,83 @@
+{
+  "correlation_with_target": {
+    "tail_delay": {
+      "1": 0.0473,
+      "7": 0.0639,
+      "14": 0.0667
+    },
+    "tail_lateaircraft": {
+      "1": 0.0508,
+      "7": 0.0742,
+      "14": 0.0752
+    },
+    "flightnum_delay": {
+      "1": 0.1522,
+      "7": 0.1958,
+      "14": 0.221
+    },
+    "flightnum_median": {
+      "1": 0.1522,
+      "7": 0.1803,
+      "14": 0.2008
+    },
+    "carrier_delay": {
+      "1": 0.1326,
+      "7": 0.1201,
+      "14": 0.1078
+    },
+    "carrier_origin": {
+      "1": 0.136,
+      "7": 0.1378,
+      "14": 0.1342
+    }
+  },
+  "tail_marginal_beyond_flightnum": {
+    "base_auc": 0.76049,
+    "with_tail_auc": 0.75933,
+    "delta_bp": -11.6
+  },
+  "tail_by_window": [
+    {
+      "window": "last1",
+      "auc": 0.76046,
+      "delta_bp": -0.3
+    },
+    {
+      "window": "last7",
+      "auc": 0.76046,
+      "delta_bp": -0.3
+    },
+    {
+      "window": "last14",
+      "auc": 0.76045,
+      "delta_bp": -0.4
+    }
+  ],
+  "tail_persistence": {
+    "n_tails": 800,
+    "pearson_r_first_vs_second_half": 0.0105,
+    "interpretation": "High r means tail delay propensity is stable over time (individual aircraft have consistent delay patterns). Low r means tail history is noisy/transient."
+  },
+  "delay_by_leg": {
+    "delay_rate": {
+      "1": 0.07433254687694027,
+      "2": 0.15477116052454257,
+      "3": 0.23717131149765272,
+      "4": 0.31912817176317504,
+      "5": 0.3718231232554723,
+      "6": 0.3999380229315153,
+      "7": 0.42209631728045327,
+      "8": 0.4601084430673896
+    },
+    "mean_delay": {
+      "1": 5.008544232642966,
+      "2": 9.186783934024062,
+      "3": 13.57549849767823,
+      "4": 18.43107351364232,
+      "5": 22.477682212500927,
+      "6": 24.224100156494522,
+      "7": 27.083423229054297,
+      "8": 31.798099762470308
+    }
+  }
+}

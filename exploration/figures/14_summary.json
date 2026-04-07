@@ -1,0 +1,54 @@
+{
+  "baseline_auc": 0.7608,
+  "candidate_results": [
+    {
+      "feature": "is_peak_hour",
+      "description": "departure hour 16-20 flag",
+      "auc": 0.76106,
+      "delta_auc": 0.00029,
+      "pearson_r": 0.1981
+    },
+    {
+      "feature": "hub_max_lateaircraft_last1",
+      "description": "max hub late-aircraft rate (last 1d)",
+      "auc": 0.76097,
+      "delta_auc": 0.0002,
+      "pearson_r": 0.1241
+    },
+    {
+      "feature": "wind_x_precip",
+      "description": "windspeed * precipitation",
+      "auc": 0.76095,
+      "delta_auc": 0.00018,
+      "pearson_r": 0.0492
+    },
+    {
+      "feature": "is_convective",
+      "description": "CAPE > 500 J/kg flag",
+      "auc": 0.76074,
+      "delta_auc": -3e-05,
+      "pearson_r": 0.0764
+    },
+    {
+      "feature": "hub_max_delay_last1",
+      "description": "max hub delay across all hubs (last 1d)",
+      "auc": 0.76044,
+      "delta_auc": -0.00034,
+      "pearson_r": 0.1066
+    },
+    {
+      "feature": "delay_trend_7d",
+      "description": "carrier delay last1 - last7 (trend)",
+      "auc": 0.75981,
+      "delta_auc": -0.00097,
+      "pearson_r": 0.0674
+    },
+    {
+      "feature": "gust_factor",
+      "description": "windgusts / windspeed turbulence ratio",
+      "auc": 0.75965,
+      "delta_auc": -0.00112,
+      "pearson_r": 0.0229
+    }
+  ]
+}

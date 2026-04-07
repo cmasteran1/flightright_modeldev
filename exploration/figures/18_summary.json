@@ -1,0 +1,52 @@
+{
+  "daily_stats": {
+    "total_tail_days": 39727,
+    "mean_legs_per_day": 5.04,
+    "pct_any_delay": 0.5373,
+    "pct_cascade": 0.3277,
+    "pct_cascade_given_first_delayed": 0.7489
+  },
+  "propagation": {
+    "P_delay_given_prev_delayed": 0.7398,
+    "P_delay_given_prev_ok": 0.1606,
+    "lift_factor": 4.61
+  },
+  "absorption_by_turn_time": {
+    "30-45m": 0.8094763801935116,
+    "45-60m": 0.5955056179775281,
+    "4h+": 0.71875
+  },
+  "proposed_cascade_features": {
+    "tail_n_legs_scheduled": "Number of legs this tail is scheduled for today. More legs = more cascade opportunity.",
+    "tail_min_turn_time": "Minimum scheduled turn time for this tail today. Tight turns have less recovery buffer.",
+    "tail_mean_turn_time": "Average scheduled turn time. Loose schedules absorb delays better.",
+    "tail_has_tight_turn": "Binary: any turn < 45 min in today's rotation. Single tight turn can cascade the rest of the day.",
+    "tail_first_dep_hour": "First scheduled departure hour. Early starts accumulate more legs.",
+    "tail_route_complexity": "Number of unique airports in today's rotation. More airports = more weather/congestion exposure.",
+    "tail_historical_delay_propensity": "Tail's 14-day rolling delay rate. Some aircraft consistently delay (maintenance issues, configuration problems).",
+    "tail_schedule_buffer_ratio": "Total scheduled block time / total actual block time (historical). Tight scheduling leaves less slack."
+  },
+  "cascade_prediction": {
+    "auc": 0.6433,
+    "average_precision": 0.5686,
+    "features_used": [
+      "n_legs",
+      "mean_turn",
+      "min_sched_dep",
+      "max_sched_dep",
+      "n_airports",
+      "mean_distance"
+    ],
+    "train_size": 17047,
+    "test_size": 4552,
+    "cascade_rate_test": 0.4424
+  },
+  "cascade_feature_importance": {
+    "n_legs": 22.4,
+    "mean_turn": 17.7,
+    "min_sched_dep": 16.1,
+    "max_sched_dep": 19.0,
+    "n_airports": 8.3,
+    "mean_distance": 16.5
+  }
+}

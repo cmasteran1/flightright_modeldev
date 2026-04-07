@@ -1,0 +1,5 @@
+Your role is as an expert data scientist
+
+Your task will be to explore the conections between the historical BTS data, weather data, and delay risks
+You will explore those connections by making charts and figures which determine if various features correlate with delay risks
+You will never modify a file in the src directory, rather you should make your own exploration workspace.

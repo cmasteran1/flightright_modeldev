@@ -1413,10 +1413,66 @@ def add_turn_time_hours(df: pd.DataFrame) -> pd.DataFrame:
     df["prev_dest"] = df.groupby(key, sort=False)["Dest"].shift(1)
 
     ok = df["prev_dest"].astype(str).str.upper() == df["Origin"].astype(str).str.upper()
-    delta_hours = (df["dep_dt_utc"] - df["prev_arr_dt_utc"]).dt.total_seconds() / 3600.0
+    # Ensure tz-consistency before subtraction
+    dep_utc = pd.to_datetime(df["dep_dt_utc"], utc=True)
+    prev_utc = pd.to_datetime(df["prev_arr_dt_utc"], utc=True)
+    delta_hours = (dep_utc - prev_utc).dt.total_seconds() / 3600.0
     # Clip to [0, 48]: negatives are schedule overlaps, >48h are multi-day gaps
     delta_hours = delta_hours.clip(lower=0.0, upper=48.0)
     df["turn_time_hours"] = np.where(ok, delta_hours, np.nan)
+    return df
+
+
+def add_tail_cascade_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Add tail-level cascade risk features:
+    - tail_n_legs_scheduled: total legs this tail flies today
+    - tail_min_turn_time: minimum turn time (hours) in the tail's daily rotation
+    - tail_has_tight_turn: binary flag for any turn < 45 min today
+    """
+    df = df.copy()
+    df["tail_n_legs_scheduled"] = np.nan
+    df["tail_min_turn_time"] = np.nan
+    df["tail_has_tight_turn"] = pd.Series(np.zeros(len(df), dtype=np.int8), index=df.index).astype("Int8")
+
+    if "Tail_Number" not in df.columns or "FlightDate" not in df.columns:
+        print("[WARN] tail_cascade: missing Tail_Number or FlightDate, skipping")
+        return df
+
+    tn = df["Tail_Number"].astype(str).str.strip().str.upper()
+    fd = pd.to_datetime(df["FlightDate"], errors="coerce").dt.normalize()
+    valid = (tn != "") & (tn != "NAN") & (tn != "NONE") & fd.notna()
+
+    if valid.sum() == 0:
+        print("[WARN] tail_cascade: no valid tail numbers, skipping")
+        return df
+
+    sub = df.loc[valid, ["Tail_Number", "FlightDate", "turn_time_hours"]].copy()
+    sub["Tail_Number"] = tn[valid]
+    sub["FlightDate"] = fd[valid]
+
+    grp = sub.groupby(["Tail_Number", "FlightDate"])
+
+    # Number of legs this tail is scheduled for today
+    leg_counts = grp.size().rename("tail_n_legs_scheduled")
+    sub = sub.join(leg_counts, on=["Tail_Number", "FlightDate"])
+    df.loc[valid, "tail_n_legs_scheduled"] = sub["tail_n_legs_scheduled"].values
+
+    # Min turn time across the tail's daily rotation
+    if "turn_time_hours" in sub.columns:
+        min_turn = grp["turn_time_hours"].min().rename("tail_min_turn_time")
+        sub = sub.drop(columns=["tail_min_turn_time"], errors="ignore")
+        sub = sub.join(min_turn, on=["Tail_Number", "FlightDate"])
+        df.loc[valid, "tail_min_turn_time"] = sub["tail_min_turn_time"].values
+
+        # Has any turn < 45 min (0.75 hours)
+        tight = (sub["tail_min_turn_time"] < 0.75).astype(np.int8)
+        df.loc[valid, "tail_has_tight_turn"] = tight.values
+
+    n = valid.sum()
+    print(f"[OK] tail_cascade: computed for {n:,} rows. "
+          f"mean legs={df['tail_n_legs_scheduled'].mean():.1f}, "
+          f"tight_turn_rate={df['tail_has_tight_turn'].mean():.3f}")
+
     return df
 
 
@@ -1561,8 +1617,13 @@ def balance_to_pos_frac(df: pd.DataFrame, label_col: str, pos_frac: float, seed:
 def add_is_peak_hour(df: pd.DataFrame) -> pd.DataFrame:
     """Flag departure hours 16-20 (peak congestion window). +2.9 bp AUC."""
     df = df.copy()
-    hour = pd.to_numeric(df.get("sched_dep_hour"), errors="coerce")
-    df["is_peak_hour"] = ((hour >= 16) & (hour <= 20)).astype("Int8")
+    if "sched_dep_hour" in df.columns:
+        hour = pd.to_numeric(df["sched_dep_hour"], errors="coerce")
+    else:
+        # sched_dep_hour not yet computed — derive from CRSDepTime
+        hour = pd.to_numeric(df.get("CRSDepTime"), errors="coerce").floordiv(100)
+    peak = (hour >= 16) & (hour <= 20)
+    df["is_peak_hour"] = peak.astype("int8").where(hour.notna(), other=pd.NA).astype("Int8")
     return df
 
 
@@ -1580,12 +1641,20 @@ def add_hub_max_lateaircraft_last1(df: pd.DataFrame) -> pd.DataFrame:
 def add_wind_x_precip(df: pd.DataFrame) -> pd.DataFrame:
     """Interaction: windspeed * precipitation at departure. +1.8 bp AUC."""
     df = df.copy()
-    wind = pd.to_numeric(df.get("origin_dep_windspeed_kmh"), errors="coerce")
-    if wind.isna().all() and "origin_dep_windspeed_10m" in df.columns:
+    if "origin_dep_windspeed_kmh" in df.columns:
+        wind = pd.to_numeric(df["origin_dep_windspeed_kmh"], errors="coerce")
+    elif "origin_dep_windspeed_10m" in df.columns:
         wind = pd.to_numeric(df["origin_dep_windspeed_10m"], errors="coerce")
-    precip = pd.to_numeric(df.get("origin_dep_precip_mm"), errors="coerce")
-    if precip.isna().all() and "origin_dep_precipitation" in df.columns:
+    elif "origin_dep_windgusts_kmh" in df.columns:
+        wind = pd.to_numeric(df["origin_dep_windgusts_kmh"], errors="coerce")
+    else:
+        wind = pd.Series(np.nan, index=df.index)
+    if "origin_dep_precip_mm" in df.columns:
+        precip = pd.to_numeric(df["origin_dep_precip_mm"], errors="coerce")
+    elif "origin_dep_precipitation" in df.columns:
         precip = pd.to_numeric(df["origin_dep_precipitation"], errors="coerce")
+    else:
+        precip = pd.Series(np.nan, index=df.index)
     df["wind_x_precip"] = wind * precip
     return df
 
@@ -1813,6 +1882,7 @@ def main():
         df = add_wn_hub_weather_from_openmeteo(df, hubs=wx_hubs, cache_dir=wx_cache)
 
     df = add_turn_time_hours(df)
+    df = add_tail_cascade_features(df)
 
     prior_leg_cfg = feat_cfg.get("prior_leg") or {}
     if prior_leg_cfg.get("enabled", True):
@@ -1828,7 +1898,7 @@ def main():
     else:
         print("[INFO] prior_leg disabled via config")
 
-    thresholds = (cfg.get("balance", {}) or {}).get("thresholds", [15, 30, 45, 60])
+    thresholds = (cfg.get("balance", {}) or {}).get("thresholds", [15, 30, 60, 120])
     thresholds = [int(x) for x in thresholds]
     delay_col = (cfg.get("balance", {}) or {}).get("delay_col", "DepDelayMinutes")
     df = add_dep_labels_for_thresholds(df, thresholds, delay_col=delay_col)
