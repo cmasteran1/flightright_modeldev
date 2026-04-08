@@ -1,0 +1,13 @@
+{
+  "name": "flightright-modeldev-local",
+  "owner": {
+    "name": "Conner"
+  },
+  "plugins": [
+    {
+      "name": "flightright-modeldev",
+      "source": "./flightright-modeldev-plugin",
+      "description": "Data science workbench skills for flight delay modeling (research, data quality, feature transferability, model implementation, hyperparameter tuning, runtime management, correlations & interactions)."
+    }
+  ]
+}

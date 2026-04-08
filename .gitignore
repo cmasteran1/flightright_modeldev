@@ -51,9 +51,12 @@ weather_cache_dest_hourly/
 
 # ── Claude Code ───────────────────────────────────────────────────────────────
 # Ignore the contents of .claude/ by default (personal settings, plans, history),
-# but DO track project-level slash commands so the team shares them.
+# but DO track project-level slash commands and the shared settings.json
+# (which enables the flightright-modeldev plugin for all teammates).
+# settings.local.json stays ignored — that's for per-user permissions.
 .claude/*
 !.claude/commands/
+!.claude/settings.json
 
 # ── OS artifacts ──────────────────────────────────────────────────────────────
 .DS_Store

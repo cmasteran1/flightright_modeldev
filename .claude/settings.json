@@ -1,0 +1,13 @@
+{
+  "extraKnownMarketplaces": {
+    "flightright-modeldev-local": {
+      "source": {
+        "source": "directory",
+        "path": "."
+      }
+    }
+  },
+  "enabledPlugins": {
+    "flightright-modeldev@flightright-modeldev-local": true
+  }
+}

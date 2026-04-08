@@ -1,0 +1,9 @@
+{
+  "name": "flightright-modeldev",
+  "version": "0.1.0",
+  "description": "Data science workbench for building and iterating on machine learning models that predict departure and arrival delay probabilities for flights.",
+  "author": {
+    "name": "Conner"
+  },
+  "keywords": ["machine-learning", "flight-delay", "feature-engineering", "data-science", "aerodatabox", "bts"]
+}
