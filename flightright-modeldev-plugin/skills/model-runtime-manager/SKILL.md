@@ -125,15 +125,105 @@ When the user supplies a batch (e.g., an HPO report) or asks to
 When asked for status, produce a compact table:
 
 ```markdown
-| Run id | Status | PID | Started | Elapsed | Last metric | Notes |
-|--------|--------|-----|---------|---------|-------------|-------|
-| 20260408-143210-gbdt-a | running | 48211 | 14:32 | 1h12m | val_mae=8.9 | fold 2/3 |
-| 20260408-150044-gbdt-b | queued  | -     | -     | -     | -           | waiting for slot |
-| 20260408-121005-gbdt-c | done    | -     | 12:10 | 2h03m | val_mae=8.4 | best so far |
+| Run id | Status | PID | Started | Elapsed | Last metric | MLflow | Notes |
+|--------|--------|-----|---------|---------|-------------|--------|-------|
+| 20260408-143210-gbdt-a | running | 48211 | 14:32 | 1h12m | auc_eval_ge15=0.79 | dep_train_WN_v11 | fold 2/3 |
+| 20260408-150044-gbdt-b | queued  | -     | -     | -     | -           | -      | waiting for slot |
+| 20260408-121005-gbdt-c | done    | -     | 12:10 | 2h03m | multibin_logloss=1.52 | dep_train_WN_v11 | best so far |
 ```
 
-Pull the "last metric" line from the run's stdout log using a
-simple tail + regex, not by reinterpreting the whole log.
+Pull the "last metric" line from MLflow (see below) rather than
+reinterpreting the whole stdout log — MLflow is the source of
+truth for per-threshold and multibin metrics once a trainer
+reaches the logging step. Only fall back to tailing
+`stdout.log` if MLflow has no active run yet (e.g., the trainer
+crashed before `init_mlflow`).
+
+## MLflow: The Source of Truth for Run Results
+
+The trainers in `src/training/` each log one MLflow run per
+invocation to a local file store at
+`../flightrightdata/mlruns/`. Experiments by script:
+
+- `departure-delay`         — `train_dep_bins_ordinal_catboost.py`
+- `arrival-delay`           — `train_arr_bins_ordinal_catboost.py`
+- `cancellation`            — `train_cancellation_catboost.py`
+- `hyperparam-optimization` — `hyperparam_optimize.py` (writes a
+  parent run per invocation plus one nested child run per Optuna
+  trial)
+
+Each run records the training config as params, per-threshold
+AUCs and multibin logloss/accuracy as metrics, and the deploy
+bundle + registry.json + metrics JSON as artifacts. Tags include
+`model_type`, `config_path`, `fast_mode`, and `git_commit`.
+
+The MLflow run name defaults to the training config file stem
+(e.g. `dep_train_WN_100_v10`), which you should record in
+`runs/registry.jsonl` alongside the local run_id so a teammate
+can click through from your status table to the full run detail.
+
+### Report Results Back Through MLflow
+
+When a training run finishes, read its final state from MLflow
+rather than from stdout. Example:
+
+```python
+import mlflow
+from pathlib import Path
+mlflow.set_tracking_uri(
+    Path("../flightrightdata/mlruns").resolve().as_uri()
+)
+client = mlflow.MlflowClient()
+exp = client.get_experiment_by_name("departure-delay")
+run = client.search_runs(
+    [exp.experiment_id],
+    filter_string="tags.config_path LIKE '%dep_train_WN_100_v10.json'",
+    order_by=["start_time DESC"],
+    max_results=1,
+)[0]
+print(run.info.run_name, run.info.status)
+for k in sorted(run.data.metrics):
+    print(f"  {k}: {run.data.metrics[k]:.4f}")
+```
+
+When reporting a finished run to the user, always include:
+- The MLflow run name and run_id (first 12 chars is enough)
+- The key metrics for that model family:
+  - dep/arr: `auc_eval_unbal_ge15/30/45/60`,
+    `multibin_log_loss`, `multibin_accuracy`
+  - cancellation: `auc`, `average_precision`, `log_loss`, `brier`
+  - HPO parent: `baseline_auc_ge*`, `per_thr_opt_auc_ge*`,
+    `shared_opt_auc_ge*`
+- The path to the deploy bundle (the `.joblib` logged as an
+  artifact on the run)
+- A one-line diff vs. the previous run on the same experiment
+  and same config path, if one exists — this makes regressions
+  obvious instead of hiding them in absolute numbers.
+
+### Launching a Sweep Batch
+
+When queueing an HPO-designed sweep from
+`ml-hyperparameter-optimization`, the cleanest launch is usually
+a single invocation of `hyperparam_optimize.py` with a trial
+budget (e.g. `--n-trials 100`) rather than launching N separate
+trainer jobs. That way MLflow records all trials under one
+parent run and the HPO skill can query them as a single study.
+Only split into per-config trainer jobs when the user
+specifically needs separate full-quality training runs (not
+sweep trials) for a handful of candidate configs.
+
+### Browsing
+
+To hand the user a clickable view:
+
+```
+.venv/bin/mlflow ui --backend-store-uri ../flightrightdata/mlruns
+```
+
+Then open http://127.0.0.1:5000. Do NOT prefix the path with
+`file://` — a relative URI like `file://../path` is malformed
+and MLflow will crash trying to create a directory at the
+filesystem root.
 
 ## Resource Management
 

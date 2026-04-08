@@ -56,6 +56,43 @@ follow-up work.
 If any of these assumptions need to change for your repo layout,
 tell Claude when you invoke a skill and it will adapt.
 
+## MLflow integration
+
+The four trainers in `src/training/`
+(`train_dep_bins_ordinal_catboost.py`,
+`train_arr_bins_ordinal_catboost.py`,
+`train_cancellation_catboost.py`, and `hyperparam_optimize.py`)
+log every invocation as an MLflow run to a local file store at
+`../flightrightdata/mlruns/`. Each run captures the flattened
+training config as params, per-threshold and multibin metrics,
+and the deploy bundle + registry JSON as artifacts.
+`hyperparam_optimize.py` additionally writes one NESTED MLflow
+run per Optuna trial so a sweep lands as a sortable table.
+
+Two skills know about this and use MLflow as their source of
+truth:
+
+- `ml-hyperparameter-optimization` — queries the
+  `hyperparam-optimization` experiment to compare trials,
+  identify winning configs, and produce HPO reports. It will
+  direct you to `mlflow ui` for parallel-coordinate and contour
+  plots when a sweep finishes.
+- `model-runtime-manager` — reads the trainer experiments
+  (`departure-delay`, `arrival-delay`, `cancellation`) when
+  reporting the status and final metrics of launched jobs, and
+  records the MLflow run name alongside the local run id in its
+  registry.
+
+Browse runs with:
+
+```
+.venv/bin/mlflow ui --backend-store-uri ../flightrightdata/mlruns
+```
+
+then open http://127.0.0.1:5000. Do NOT prefix the path with
+`file://` — a relative URI like `file://../path` is malformed
+and MLflow will crash on startup.
+
 ## Optional: Aerodatabox API key
 
 Only the `feature-transferability` skill needs an API key, and only

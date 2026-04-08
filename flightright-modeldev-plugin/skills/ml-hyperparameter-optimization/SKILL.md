@@ -95,6 +95,18 @@ Use these as starting points, not dogma. Justify any deviation.
 
 ## Hyperparameter Sweeps
 
+The project's HPO entry point is
+`src/training/hyperparam_optimize.py`. It takes a dep or arr
+training config, runs Optuna (TPE sampler) over the four-threshold
+set, and writes `optimization_summary.json` plus generated
+`optimized_{mode}_train_config_{shared,per_thr}.json` files to the
+config's `outdir / hyperparam_search/`.
+
+```
+.venv/bin/python src/training/hyperparam_optimize.py \
+    data/dep_train_WN_100_v10.json --n-trials 100
+```
+
 Prefer in this order:
 
 1. **Manual coarse pass.** A handful of runs to sanity-check
@@ -102,7 +114,8 @@ Prefer in this order:
 2. **Random search** on log-uniform ranges for 20-50 trials — cheap
    and surprisingly strong.
 3. **Bayesian optimization** (Optuna / scikit-optimize) once the
-   ranges are trustworthy and each trial is non-trivial.
+   ranges are trustworthy and each trial is non-trivial. This is
+   what `hyperparam_optimize.py` already does.
 4. **Successive halving / Hyperband** when trials are expensive and
    partial progress is a reliable signal.
 
@@ -130,6 +143,87 @@ Treat feature extraction windows as tunable:
 Sweep these alongside the model when feasible, but always log the
 extraction config with the trial results so runs are reproducible.
 
+## Reading Sweep Results From MLflow
+
+Every invocation of `hyperparam_optimize.py` logs to a local
+MLflow store at `../flightrightdata/mlruns/` under the experiment
+**`hyperparam-optimization`**. Each run writes:
+
+- **A parent run** per script invocation, named
+  `hpo_{mode}_{config_stem}`. Tags carry the mode (dep/arr),
+  config path, and git commit. Final comparison metrics land on
+  the parent: `baseline_auc_ge{thr}`, `shared_opt_auc_ge{thr}`,
+  `per_thr_opt_auc_ge{thr}`, `shared_opt_multibin_logloss`,
+  `per_thr_opt_multibin_logloss`, plus the generated
+  `optimization_summary.json` and both `optimized_*_train_config_*.json`
+  files as artifacts.
+- **One nested child run per Optuna trial**, named
+  `per_thr{thr}_trial{n}` for per-threshold mode and
+  `shared_trial{n}` for the shared-params mode. Each child logs
+  the sampled CatBoost params (`depth`, `learning_rate`,
+  `l2_leaf_reg`, `iterations`, `od_wait`, `bootstrap_type`, etc.)
+  and the resulting AUC as metric `auc` (per-thr) or `mean_auc`
+  (shared).
+
+This is the primary place to interpret a sweep. When reasoning
+about a completed HPO run, always consult MLflow — do not rely
+only on the printed stdout log.
+
+**Browse the UI.** From the repo root:
+
+```
+.venv/bin/mlflow ui --backend-store-uri ../flightrightdata/mlruns
+```
+
+Then open http://127.0.0.1:5000, click the
+`hyperparam-optimization` experiment, and sort trial runs by
+`auc` or `mean_auc` descending. Use the MLflow UI's parallel
+coordinates and contour plots to see which param ranges produce
+the winning trials — this is the fastest way to spot that, e.g.,
+`learning_rate > 0.05` dominates or that `bootstrap_type=Bayesian`
+beats the other two.
+
+**Query programmatically.** When you need the top trials for a
+report or to compare two studies, use `MlflowClient.search_runs`:
+
+```python
+import mlflow
+from pathlib import Path
+mlflow.set_tracking_uri(
+    Path("../flightrightdata/mlruns").resolve().as_uri()
+)
+client = mlflow.MlflowClient()
+exp = client.get_experiment_by_name("hyperparam-optimization")
+
+# Top 5 per-threshold (thr=15) trials by AUC
+top = client.search_runs(
+    [exp.experiment_id],
+    filter_string="tags.optuna_mode = 'per-threshold' and tags.threshold = '15'",
+    order_by=["metrics.auc DESC"],
+    max_results=5,
+)
+for r in top:
+    print(r.data.metrics["auc"], r.data.params.get("depth"),
+          r.data.params.get("learning_rate"))
+```
+
+Useful filter-string expressions:
+- `tags.optuna_mode = 'per-threshold'` — trials from Mode A
+- `tags.optuna_mode = 'shared'` — trials from Mode B
+- `tags.threshold = '30'` — per-threshold trials for a specific
+  delay bucket
+- `metrics.auc > 0.82` — cut off weak trials
+- `tags.git_commit = '<sha>'` — restrict to runs from a specific
+  code version
+
+**Compare an HPO parent run to the baseline trainer run.** Since
+`train_dep_bins_ordinal_catboost.py` logs to the
+`departure-delay` experiment (or `arrival-delay` for arr) with
+the same `git_commit` tag, you can answer "did the HPO-optimized
+config actually outperform the baseline in the next full
+training run?" by querying both experiments and joining on git
+commit + config stem.
+
 ## Leakage and Pitfalls
 
 - Rolling aggregations must use only data **before** the target
@@ -144,7 +238,8 @@ extraction config with the trial results so runs are reproducible.
 ## Deliverable
 
 When a sweep or tuning exercise completes, produce a short markdown
-report:
+report. Pull the numbers from MLflow (not from the printed stdout
+log):
 
 ```markdown
 # HPO Report: <experiment name>
@@ -154,16 +249,21 @@ report:
 **Metric:** <primary metric>
 **Baseline:** <value>
 **Best trial:** <value and delta vs. baseline>
+**MLflow parent run:** <run_name> (`<run_id>`)
 
 ## Search Space
 Table of hyperparameters and ranges.
 
 ## Top Trials
-Small table of the best 5 trials with their configs and metrics.
+Small table of the best 5 trials with their configs and metrics,
+pulled via `MlflowClient.search_runs` from the
+`hyperparam-optimization` experiment. Include the MLflow run_id
+for each so the reader can click through.
 
 ## Recommendations
 - Adopt these settings? Yes/no, with reasoning.
-- Next experiment to queue in `model-runtime-manager`.
+- Path to the generated `optimized_{mode}_train_config_*.json` to
+  feed into `model-runtime-manager` for a full-scale training run.
 - Anything that looks suspicious and should be checked by
   `data-quality-analysis`.
 ```
