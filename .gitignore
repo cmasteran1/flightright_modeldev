@@ -50,7 +50,10 @@ weather_cache_dest_hourly/
 *.sublime-workspace
 
 # ── Claude Code ───────────────────────────────────────────────────────────────
-.claude/
+# Ignore the contents of .claude/ by default (personal settings, plans, history),
+# but DO track project-level slash commands so the team shares them.
+.claude/*
+!.claude/commands/
 
 # ── OS artifacts ──────────────────────────────────────────────────────────────
 .DS_Store
