@@ -283,6 +283,9 @@ for _w in [7, 14]:
     _reg_num(f"arrdelay_n_{_w}d_car_od", 0, 500, f"arr delay count {_w}d carrier OD")
 _reg_num("arrdelay_median_7d_fn_od", -30, _MULTIDAY_MEDIAN_CAP[7], "arr delay median 7d flight-num OD")
 _reg_num("arrdelay_median_7d_car_od", -30, _MULTIDAY_MEDIAN_CAP[7], "arr delay median 7d carrier OD")
+# v10: 14-day arrival delay medians (added alongside the 7d median, hybrid mean/median rule)
+_reg_num("arrdelay_median_14d_fn_od", -30, _MULTIDAY_MEDIAN_CAP[14], "arr delay median 14d flight-num OD")
+_reg_num("arrdelay_median_14d_car_od", -30, _MULTIDAY_MEDIAN_CAP[14], "arr delay median 14d carrier OD")
 
 # --- Arrival-specific: airtime rolling stats ---
 for _w in [7, 14]:
@@ -313,6 +316,29 @@ _reg_num("wind_x_precip", 0, 200000, "windspeed * precipitation interaction")
 _reg_num("strike_severity", 0, 5, "max severity of active labor action (0-5)")
 _reg_num("days_to_strike", 0, 90, "days until nearest announced strike")
 _reg_num("carrier_delay_rate_anomaly_7d", -10, 10, "z-score of 7d carrier delay rate vs 60d baseline")
+
+# --- v10: hybrid mean/median 1-day delay baselines ---
+# Single-day medians over flight rows; lower bound matches the existing _mean_last1 entries
+# (DepDelayMinutes is BTS so the rare negative tail is permitted), upper bound matches the
+# 1-day mean cap (a low-support window can be a single severe-delay event).
+_reg_num("carrier_depdelay_median_last1", -30, _MULTIDAY_MEDIAN_CAP[1], "carrier dep delay median 1d (v10)")
+_reg_num("carrier_origin_depdelay_median_last1", -30, _MULTIDAY_MEDIAN_CAP[1], "carrier-origin dep delay median 1d (v10)")
+_reg_num("origin_depdelay_median_last1", -30, _MULTIDAY_MEDIAN_CAP[1], "origin dep delay median 1d (v10)")
+_reg_num("dest_depdelay_median_last1", -30, _MULTIDAY_MEDIAN_CAP[1], "dest dep delay median 1d (v10)")
+for _h in [0, 1, 2, 3, 4]:
+    _reg_num(f"hub_{_h}_depdelay_median_last1", -30, _MULTIDAY_MEDIAN_CAP[1], f"hub {_h} dep delay median 1d (v10)")
+
+# --- v10: AeroDataBox-compatible BTS aggregates ---
+# Three new airport-level rate features. All are bounded fractions in [0, 1].
+_reg_num("origin_nasdelay_rate_last1d", 0, 1, "origin NAS delay rate 1d (v10)")
+_reg_num("cancel_rate_origin_last1d", 0, 1, "origin cancel rate 1d (v10)")
+_reg_num("divert_rate_origin_last14d", 0, 1, "origin divert rate 14d (v10)")
+
+# --- v10: arrival elapsed-time-ratio (gate-based, AeroDataBox-safe) ---
+# Realistic flights run 0.7x-1.5x the scheduled block time; allow a wider window for
+# extreme low-support cases.
+_reg_num("elapsed_time_ratio_last14d", 0, 10, "actual/scheduled elapsed-time ratio 14d (v10)")
+_reg_num("elapsed_time_ratio_n_last14d", 0, 500, "elapsed-time-ratio 14d support count (v10)")
 
 # --- Raw weather column names (from prepare_dataset before rename) ---
 for _raw in [
@@ -439,10 +465,13 @@ def validate_features(
     # Only applies to delay features — airtime, wo_slip, etc. have different scales.
     _MULTIDAY_P95_LIMITS: Dict[str, Tuple[float, float]] = {
         # pattern substring -> (p95_warn_mean, p95_warn_median)
+        # Median ceilings track the 7d window because 14d medians at the route grain
+        # (e.g. arrdelay_median_14d_fn_od) inherit chronically-late routes that the
+        # extra week of history does not smooth out — observed P95 ~52 in v10.
         "last7":  (120.0, 60.0),
-        "last14": (100.0, 45.0),
+        "last14": (100.0, 60.0),
         "_7d_":   (120.0, 60.0),
-        "_14d_":  (100.0, 45.0),
+        "_14d_":  (100.0, 60.0),
     }
     # Features whose scale is NOT delay minutes — exempt from magnitude check
     _MAGNITUDE_EXEMPT_PREFIXES = ("airtime_", "wo_slip_")
