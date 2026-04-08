@@ -226,12 +226,16 @@ MLflow experiments used:
   cancellation             — train_cancellation_catboost.py
   hyperparam-optimization  — hyperparam_optimize.py
 
-To browse runs:
+To browse runs (from the repo root):
 
-  .venv/bin/mlflow ui --backend-store-uri \
-      file://../flightrightdata/mlruns
+  .venv/bin/mlflow ui --backend-store-uri ../flightrightdata/mlruns
 
-then open http://127.0.0.1:5000 in a browser.
+then open http://127.0.0.1:5000 in a browser. Note: do NOT prefix
+the path with file:// — a relative URI like file://../path is
+parsed as having ".." for the authority and "/path" under root,
+which MLflow then tries to create at the filesystem root and
+fails with a read-only error on macOS. Use a plain filesystem
+path (relative or absolute) and MLflow will resolve it.
 
 Larger per-airline artifacts still live in
 ../flightrightdata/data/models/<airline>_<version>/ and are
