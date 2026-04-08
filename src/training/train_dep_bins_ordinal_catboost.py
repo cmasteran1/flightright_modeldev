@@ -57,6 +57,9 @@ import matplotlib.pyplot as plt
 
 from catboost import CatBoostClassifier, Pool
 
+import mlflow
+from _mlflow_setup import init_mlflow, loggable_params, git_commit
+
 
 REPO_ROOT = Path.cwd()
 DATA_ROOT = (REPO_ROOT.parent / "flightrightdata").resolve()
@@ -392,6 +395,20 @@ def main():
     if CFG_PATH is not None:
         cfg.update(_load_json(CFG_PATH))
 
+    # --- MLflow tracking setup -------------------------------------------------
+    init_mlflow("departure-delay")
+    _run_name = CFG_PATH.stem if CFG_PATH is not None else "dep_default"
+    mlflow.start_run(run_name=_run_name)
+    mlflow.set_tag("model_type", "departure-delay")
+    mlflow.set_tag("config_path", str(CFG_PATH) if CFG_PATH is not None else "")
+    mlflow.set_tag("script", "train_dep_bins_ordinal_catboost.py")
+    mlflow.set_tag("fast_mode", "1" if FAST else "0")
+    _commit = git_commit()
+    if _commit:
+        mlflow.set_tag("git_commit", _commit)
+    mlflow.log_params(loggable_params(cfg))
+    # --------------------------------------------------------------------------
+
     if FAST:
         cfg["iterations"] = min(int(cfg.get("iterations", 4000)), 1200)
         cfg["depth"] = min(int(cfg.get("depth", 8)), 6)
@@ -587,6 +604,15 @@ def main():
 
         log(f"[thr>={thr}] Youden threshold (from UNBAL cal)={th:.3f} | TPR={tpr:.3f} FPR={fpr:.3f}")
         log(f"[thr>={thr}] AUC cal_unbal={auc_cal:.3f} | AUC test_bal_sanity={auc_test_bal:.3f} | AUC eval_unbal={auc_eval:.3f}")
+
+        mlflow.log_metrics({
+            f"auc_cal_unbal_ge{thr}": float(auc_cal) if not np.isnan(auc_cal) else 0.0,
+            f"auc_test_bal_ge{thr}": float(auc_test_bal) if not np.isnan(auc_test_bal) else 0.0,
+            f"auc_eval_unbal_ge{thr}": float(auc_eval) if not np.isnan(auc_eval) else 0.0,
+            f"youden_threshold_ge{thr}": float(th),
+            f"youden_tpr_ge{thr}": float(tpr),
+            f"youden_fpr_ge{thr}": float(fpr),
+        })
 
         print(f"[thr>={thr}] Classification report on BALANCED sanity test @ Youden(from unbal cal):", flush=True)
         print(classification_report(y_test_bal, y_pred_bal), flush=True)
@@ -792,6 +818,27 @@ def main():
 
     joblib.dump(bundle, deploy_path)
     log(f"[SAVE] deployable bundle -> {deploy_path}")
+
+    # --- MLflow final metrics + artifacts --------------------------------------
+    mlflow.log_metrics({
+        "multibin_log_loss": float(ll) if not np.isnan(ll) else 0.0,
+        "multibin_accuracy": float(acc),
+        "eval_rows": float(len(df_eval_unbal)),
+        "cal_rows": float(len(df_cal_unbal)),
+    })
+    for _artifact in (
+        OUTDIR / "registry.json",
+        OUTDIR / "bins_meta.json",
+        OUTDIR / "resolved_features.json",
+        sample_path,
+        deploy_path,
+    ):
+        try:
+            mlflow.log_artifact(str(_artifact))
+        except Exception as _e:
+            log(f"[mlflow][WARN] failed to log artifact {_artifact}: {_e}")
+    mlflow.end_run()
+    # --------------------------------------------------------------------------
 
     log("[OK] finished training dep bin distribution models")
 

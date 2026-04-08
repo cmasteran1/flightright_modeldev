@@ -46,6 +46,9 @@ import matplotlib.pyplot as plt
 
 from catboost import CatBoostClassifier, Pool
 
+import mlflow
+from _mlflow_setup import init_mlflow, loggable_params, git_commit
+
 
 REPO_ROOT = Path.cwd()
 DATA_ROOT = (REPO_ROOT.parent / "flightrightdata").resolve()
@@ -208,6 +211,19 @@ def main():
 
     cfg = _load_json(CFG_PATH)
 
+    # --- MLflow tracking setup -------------------------------------------------
+    init_mlflow("cancellation")
+    mlflow.start_run(run_name=CFG_PATH.stem)
+    mlflow.set_tag("model_type", "cancellation")
+    mlflow.set_tag("config_path", str(CFG_PATH))
+    mlflow.set_tag("script", "train_cancellation_catboost.py")
+    mlflow.set_tag("fast_mode", "1" if FAST else "0")
+    _commit = git_commit()
+    if _commit:
+        mlflow.set_tag("git_commit", _commit)
+    mlflow.log_params(loggable_params(cfg))
+    # --------------------------------------------------------------------------
+
     if FAST:
         cfg["iterations"] = min(int(cfg.get("iterations", 4000)), 1200)
         cfg["depth"] = min(int(cfg.get("depth", 8)), 6)
@@ -356,6 +372,21 @@ def main():
     log(f"[eval] AUC={auc:.4f} AP={ap:.4f} LogLoss={ll:.4f} Brier={brier:.4f}")
     log(f"[eval] Youden threshold={youden_thr:.3f} TPR={youden_tpr:.3f} FPR={youden_fpr:.3f}")
 
+    mlflow.log_metrics({
+        "auc": auc,
+        "average_precision": ap,
+        "log_loss": ll,
+        "brier": brier,
+        "youden_threshold": float(youden_thr),
+        "youden_tpr": float(youden_tpr),
+        "youden_fpr": float(youden_fpr),
+        "train_rows": float(len(df_train)),
+        "train_pos_rate": float(df_train[TARGET_COL].mean()),
+        "cal_rows": float(len(df_cal_unbal)),
+        "eval_rows": float(len(df_eval_unbal)),
+        "eval_pos_rate": float(np.mean(y_eval)),
+    })
+
     y_pred = (p_eval >= youden_thr).astype(int)
     log("[eval] Classification report (unbalanced eval):")
     print(classification_report(y_eval, y_pred, target_names=["Not Cancelled", "Cancelled"]))
@@ -438,6 +469,15 @@ def main():
 
     joblib.dump(bundle, deploy_path)
     log(f"[SAVE] deployable bundle -> {deploy_path}")
+
+    # --- MLflow artifact logging ----------------------------------------------
+    for _artifact in (metrics_path, imp_path, sample_path, deploy_path):
+        try:
+            mlflow.log_artifact(str(_artifact))
+        except Exception as _e:
+            log(f"[mlflow][WARN] failed to log artifact {_artifact}: {_e}")
+    mlflow.end_run()
+    # --------------------------------------------------------------------------
 
     log("[OK] finished training cancellation model")
 

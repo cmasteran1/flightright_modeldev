@@ -202,12 +202,44 @@ you'd rather invoke them by hand.
 Experiment tracking
 -------------------
 
-There is no MLflow or W&B integration. Experiments are versioned
-by blueprint and training-config filename, and artifacts are
-namespaced by airline and version under
-../flightrightdata/data/models/. Ad-hoc analyses live in
-exploration/ as numbered Python scripts with co-located markdown
-reports. Feature health is checked offline via src/health/.
+The trainers and the HPO sweeper log every run to a local MLflow
+store at ../flightrightdata/mlruns/. Each training invocation
+becomes one MLflow run that records:
+
+  - Parameters: the full training config (flattened to dotted
+    keys) plus tags for model type, config path, git commit, and
+    FAST_TRAIN mode
+  - Metrics:     per-threshold AUCs, multibin log-loss/accuracy,
+    row counts, positive rates, and Youden thresholds
+  - Artifacts:   metrics JSON, resolved feature list, prediction
+    samples, and the deployable bundle.joblib
+
+hyperparam_optimize.py additionally writes one NESTED MLflow run
+per Optuna trial, so a sweep produces a sortable/filterable
+trial table in the UI alongside the final baseline-vs-optimized
+comparison on the parent run.
+
+MLflow experiments used:
+
+  departure-delay          — train_dep_bins_ordinal_catboost.py
+  arrival-delay            — train_arr_bins_ordinal_catboost.py
+  cancellation             — train_cancellation_catboost.py
+  hyperparam-optimization  — hyperparam_optimize.py
+
+To browse runs:
+
+  .venv/bin/mlflow ui --backend-store-uri \
+      file://../flightrightdata/mlruns
+
+then open http://127.0.0.1:5000 in a browser.
+
+Larger per-airline artifacts still live in
+../flightrightdata/data/models/<airline>_<version>/ and are
+referenced from MLflow as logged artifacts. Ad-hoc analyses
+outside the training pipeline live in exploration/ as numbered
+Python scripts with co-located markdown reports, and are NOT
+logged to MLflow. Feature health is checked offline via
+src/health/.
 
 CatBoost writes per-run log directories named catboost_info/
 wherever the trainer is launched from. These are gitignored at

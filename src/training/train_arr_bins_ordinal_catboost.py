@@ -56,6 +56,9 @@ from sklearn.frozen import FrozenEstimator
 import joblib
 from catboost import CatBoostClassifier, Pool
 
+import mlflow
+from _mlflow_setup import init_mlflow, loggable_params, git_commit
+
 
 REPO_ROOT = Path.cwd()
 DATA_ROOT = (REPO_ROOT.parent / "flightrightdata").resolve()
@@ -409,6 +412,20 @@ def main():
     outdir = _as_data_path(OUTDIR)
     outdir.mkdir(parents=True, exist_ok=True)
 
+    # --- MLflow tracking setup -------------------------------------------------
+    init_mlflow("arrival-delay")
+    _run_name = CFG_PATH.stem if CFG_PATH is not None else "arr_default"
+    mlflow.start_run(run_name=_run_name)
+    mlflow.set_tag("model_type", "arrival-delay")
+    mlflow.set_tag("config_path", str(CFG_PATH) if CFG_PATH is not None else "")
+    mlflow.set_tag("script", "train_arr_bins_ordinal_catboost.py")
+    mlflow.set_tag("fast_mode", "1" if FAST else "0")
+    _commit = git_commit()
+    if _commit:
+        mlflow.set_tag("git_commit", _commit)
+    mlflow.log_params(loggable_params(cfg))
+    # --------------------------------------------------------------------------
+
     thresholds = cfg.get("thresholds", [15, 30, 60, 120])
     thresholds = [int(x) for x in thresholds]
     if len(thresholds) != 4:
@@ -580,6 +597,15 @@ def main():
         log(f"[thr>={thr}] Youden threshold (from UNBAL cal)={youden_thr:.3f} | TPR={youden_tpr:.3f} FPR={youden_fpr:.3f}")
         log(f"[thr>={thr}] AUC cal_unbal={auc_cal_unbal:.3f} | AUC test_bal_sanity={auc_test_bal:.3f} | AUC eval_unbal={auc_eval_unbal:.3f}")
 
+        mlflow.log_metrics({
+            f"auc_cal_unbal_ge{thr}": auc_cal_unbal if not np.isnan(auc_cal_unbal) else 0.0,
+            f"auc_test_bal_ge{thr}": auc_test_bal if not np.isnan(auc_test_bal) else 0.0,
+            f"auc_eval_unbal_ge{thr}": auc_eval_unbal if not np.isnan(auc_eval_unbal) else 0.0,
+            f"youden_threshold_ge{thr}": float(youden_thr),
+            f"youden_tpr_ge{thr}": float(youden_tpr),
+            f"youden_fpr_ge{thr}": float(youden_fpr),
+        })
+
         # Classification reports
         from sklearn.metrics import classification_report as _cr
         log(f"[thr>={thr}] Classification report on BALANCED sanity test @ Youden(from unbal cal):")
@@ -735,6 +761,25 @@ def main():
 
     joblib.dump(bundle, deploy_path)
     log(f"[SAVE] deploy bundle -> {deploy_path}")
+
+    # --- MLflow final metrics + artifacts --------------------------------------
+    mlflow.log_metrics({
+        "multibin_log_loss": float(bins_logloss) if not np.isnan(bins_logloss) else 0.0,
+        "multibin_accuracy": float(bins_acc),
+    })
+    for _artifact in (
+        outdir / metrics_name,
+        outdir / "resolved_features.json",
+        eval_out_path,
+        deploy_path,
+    ):
+        try:
+            mlflow.log_artifact(str(_artifact))
+        except Exception as _e:
+            log(f"[mlflow][WARN] failed to log artifact {_artifact}: {_e}")
+    mlflow.end_run()
+    # --------------------------------------------------------------------------
+
     log("[DONE] arr training complete.", step=True)
 
 

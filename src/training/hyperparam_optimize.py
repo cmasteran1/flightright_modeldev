@@ -31,6 +31,9 @@ from catboost import CatBoostClassifier, Pool
 import optuna
 from optuna.samplers import TPESampler
 
+import mlflow
+from _mlflow_setup import init_mlflow, loggable_params, git_commit
+
 
 REPO_ROOT = Path.cwd()
 DATA_ROOT = (REPO_ROOT.parent / "flightrightdata").resolve()
@@ -436,15 +439,33 @@ def _train_and_evaluate(params: dict, bundle: dict) -> float:
     return float(roc_auc_score(bundle["y_eval"], p_eval))
 
 
+def _log_trial_params_to_mlflow(params: dict) -> None:
+    """Log scalar CatBoost params as a flat dict on the active MLflow run."""
+    flat = {
+        k: str(v) for k, v in params.items()
+        if isinstance(v, (int, float, str, bool))
+    }
+    if flat:
+        mlflow.log_params(flat)
+
+
 def make_per_threshold_objective(thr: int, bundle: dict, seed: int):
     """Objective for per-threshold optimization: maximize AUC for one threshold."""
     def objective(trial):
         params = suggest_catboost_params(trial, seed)
-        try:
-            auc = _train_and_evaluate(params, bundle)
-        except Exception as e:
-            log(f"[trial {trial.number}] thr={thr} FAILED: {e}")
-            return 0.5
+        with mlflow.start_run(nested=True, run_name=f"per_thr{thr}_trial{trial.number}"):
+            mlflow.set_tag("optuna_mode", "per-threshold")
+            mlflow.set_tag("threshold", str(thr))
+            mlflow.set_tag("trial_number", str(trial.number))
+            _log_trial_params_to_mlflow(params)
+            try:
+                auc = _train_and_evaluate(params, bundle)
+            except Exception as e:
+                log(f"[trial {trial.number}] thr={thr} FAILED: {e}")
+                mlflow.set_tag("status", "failed")
+                mlflow.log_metric("auc", 0.5)
+                return 0.5
+            mlflow.log_metric("auc", auc)
         log(f"[trial {trial.number}] thr>={thr} AUC={auc:.5f}")
         return auc
     return objective
@@ -454,15 +475,22 @@ def make_shared_objective(bundles: Dict[int, dict], thresholds: List[int], seed:
     """Objective for shared-params optimization: maximize mean AUC across all thresholds."""
     def objective(trial):
         params = suggest_catboost_params(trial, seed)
-        aucs = []
-        for thr in thresholds:
-            try:
-                auc = _train_and_evaluate(params, bundles[thr])
-                aucs.append(auc)
-            except Exception as e:
-                log(f"[trial {trial.number}] thr={thr} FAILED: {e}")
-                aucs.append(0.5)
-        mean_auc = float(np.mean(aucs))
+        with mlflow.start_run(nested=True, run_name=f"shared_trial{trial.number}"):
+            mlflow.set_tag("optuna_mode", "shared")
+            mlflow.set_tag("trial_number", str(trial.number))
+            _log_trial_params_to_mlflow(params)
+            aucs = []
+            for thr in thresholds:
+                try:
+                    auc = _train_and_evaluate(params, bundles[thr])
+                    aucs.append(auc)
+                    mlflow.log_metric(f"auc_ge{thr}", auc)
+                except Exception as e:
+                    log(f"[trial {trial.number}] thr={thr} FAILED: {e}")
+                    aucs.append(0.5)
+                    mlflow.log_metric(f"auc_ge{thr}", 0.5)
+            mean_auc = float(np.mean(aucs))
+            mlflow.log_metric("mean_auc", mean_auc)
         auc_str = " ".join(f"thr>={t}:{a:.4f}" for t, a in zip(thresholds, aucs))
         log(f"[trial {trial.number}] shared mean_AUC={mean_auc:.5f} ({auc_str})")
         return mean_auc
@@ -610,6 +638,27 @@ def main():
     if mode is None:
         mode = "arr" if "catboost" in cfg or "features" in cfg else "dep"
     log(f"Mode: {mode} | Thresholds: {thresholds} | Trials: {args.n_trials}")
+
+    # --- MLflow tracking setup -------------------------------------------------
+    init_mlflow("hyperparam-optimization")
+    _parent_name = f"hpo_{mode}_{Path(args.config).stem}"
+    mlflow.start_run(run_name=_parent_name)
+    mlflow.set_tag("mode", mode)
+    mlflow.set_tag("script", "hyperparam_optimize.py")
+    mlflow.set_tag("config_path", str(args.config))
+    _commit = git_commit()
+    if _commit:
+        mlflow.set_tag("git_commit", _commit)
+    mlflow.log_params({
+        "hpo.mode": mode,
+        "hpo.n_trials": str(args.n_trials),
+        "hpo.thresholds": ",".join(str(t) for t in thresholds),
+        "hpo.timeout": str(args.timeout) if args.timeout is not None else "",
+        "hpo.max_train_rows": str(args.max_train_rows),
+        "hpo.max_eval_rows": str(args.max_eval_rows),
+        "hpo.config": Path(args.config).name,
+    })
+    # --------------------------------------------------------------------------
 
     # Resolve seed
     if args.seed is not None:
@@ -840,6 +889,41 @@ def main():
         json.dump(out_cfg_per_thr, f, indent=2)
     log(f"[SAVE] shared config -> {shared_cfg_path}")
     log(f"[SAVE] per-threshold config -> {per_thr_cfg_path}")
+
+    # --- MLflow final summary on the parent run --------------------------------
+    _final_metrics: Dict[str, float] = {}
+    for thr in thresholds:
+        _final_metrics[f"baseline_auc_ge{thr}"] = float(
+            baseline_results["per_threshold"][thr]["auc_eval"]
+        )
+        _final_metrics[f"shared_opt_auc_ge{thr}"] = float(
+            shared_results["per_threshold"][thr]["auc_eval"]
+        )
+        _final_metrics[f"per_thr_opt_auc_ge{thr}"] = float(
+            per_thr_results["per_threshold"][thr]["auc_eval"]
+        )
+    if "log_loss" in baseline_results.get("multibin", {}):
+        _final_metrics["baseline_multibin_logloss"] = float(baseline_results["multibin"]["log_loss"])
+        _final_metrics["shared_opt_multibin_logloss"] = float(shared_results["multibin"]["log_loss"])
+        _final_metrics["per_thr_opt_multibin_logloss"] = float(per_thr_results["multibin"]["log_loss"])
+        _final_metrics["baseline_multibin_acc"] = float(baseline_results["multibin"]["accuracy"])
+        _final_metrics["shared_opt_multibin_acc"] = float(shared_results["multibin"]["accuracy"])
+        _final_metrics["per_thr_opt_multibin_acc"] = float(per_thr_results["multibin"]["accuracy"])
+    _final_metrics["shared_best_mean_auc"] = float(study_shared.best_value)
+    _clean_final = {k: (0.0 if (isinstance(v, float) and np.isnan(v)) else v) for k, v in _final_metrics.items()}
+    mlflow.log_metrics(_clean_final)
+
+    for _artifact in (
+        output_dir / "optimization_summary.json",
+        shared_cfg_path,
+        per_thr_cfg_path,
+    ):
+        try:
+            mlflow.log_artifact(str(_artifact))
+        except Exception as _e:
+            log(f"[mlflow][WARN] failed to log artifact {_artifact}: {_e}")
+    mlflow.end_run()
+    # --------------------------------------------------------------------------
 
     log("\n[OK] Hyperparameter optimization complete.")
 

@@ -13,6 +13,15 @@ joblib>=1.3.0
 # ── Weather API ───────────────────────────────────────────────────────────────
 requests>=2.31.0
 
+# ── Experiment tracking ───────────────────────────────────────────────────────
+# MLflow is used by the trainers and hyperparam_optimize.py to log params,
+# metrics, and artifacts into ../flightrightdata/mlruns/. Browse runs with
+#   mlflow ui --backend-store-uri file://../flightrightdata/mlruns
+mlflow>=2.10.0
+
+# ── Hyperparameter optimization ───────────────────────────────────────────────
+optuna>=3.5.0
+
 # ── Timezone handling ─────────────────────────────────────────────────────────
 # zoneinfo is built-in Python 3.9+; backport for older Python:
 # tzdata>=2024.1          # Required on Windows (zoneinfo backend)
