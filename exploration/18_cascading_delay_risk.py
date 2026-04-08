@@ -275,8 +275,7 @@ def run(airline="WN", sample_n=None):
         X_te, y_te = test_m[ahead_features], test_m["cascade"].astype(int)
 
         clf = CatBoostClassifier(iterations=300, depth=4, learning_rate=0.05,
-                                 verbose=0, random_seed=42,
-                                 allow_writing_files=False)
+                                 verbose=0, random_seed=42)
         clf.fit(X_tr, y_tr)
         y_prob = clf.predict_proba(X_te)[:, 1]
         cascade_auc = roc_auc_score(y_te, y_prob)

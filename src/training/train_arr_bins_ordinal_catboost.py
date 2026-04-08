@@ -443,7 +443,6 @@ def main():
         random_seed=int(cb_cfg.get("seed", seed)),
         verbose=int(cb_cfg.get("verbose", 200)),
         thread_count=int(cb_cfg.get("thread_count", -1)),
-        allow_writing_files=False,
     )
 
     log(f"[LOAD] reading features: {in_path}", step=True)

@@ -312,7 +312,6 @@ def train_catboost_full(df, feature_order, cat_features, target_col,
         loss_function="Logloss", eval_metric="AUC",
         cat_features=cat_idx, verbose=verbose, random_seed=42,
         early_stopping_rounds=50,
-        allow_writing_files=False,
     )
     model.fit(X_train, y_train,
               eval_set=Pool(X_test, y_test, cat_features=cat_idx),
