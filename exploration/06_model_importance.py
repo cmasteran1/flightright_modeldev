@@ -61,6 +61,7 @@ def run(airline="WN", sample_n=None):
         cat_features=cat_indices,
         verbose=200, random_seed=42,
         early_stopping_rounds=50,
+        allow_writing_files=False,
     )
     model.fit(X_train, y_train,
               eval_set=Pool(X_test, y_test, cat_features=cat_indices),

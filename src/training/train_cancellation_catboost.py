@@ -324,6 +324,7 @@ def main():
         verbose=200,
         thread_count=-1,
         auto_class_weights="Balanced",
+        allow_writing_files=False,
     )
 
     log(f"[cb] fit start (iter={iterations} depth={depth} lr={lr} l2={l2} od_wait={od_wait})", step=True)

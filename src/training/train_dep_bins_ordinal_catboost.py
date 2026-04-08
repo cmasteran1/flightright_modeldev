@@ -561,6 +561,7 @@ def main():
             od_type="Iter",
             od_wait=od_wait,
             thread_count=-1,
+            allow_writing_files=False,
             **cb_extra,
         )
         clf.fit(train_pool, eval_set=es_pool, use_best_model=True)

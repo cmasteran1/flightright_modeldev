@@ -132,6 +132,7 @@ def run(sample_n=None):
                 iterations=500, depth=6, learning_rate=0.05,
                 loss_function="Logloss", cat_features=cat_indices,
                 verbose=0, random_seed=42,
+                allow_writing_files=False,
             )
             model.fit(train[feature_cols], train["y_dep_ge15"])
             prob = model.predict_proba(test[feature_cols])[:, 1]
