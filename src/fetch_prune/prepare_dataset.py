@@ -1816,9 +1816,8 @@ def main():
 
     if bool(cfg.get("add_aircraft_type", True)):
         df = add_aircraft_type_from_faa_registry(df, cfg)
-    else:
-        if "aircraft_type" not in df.columns:
-            df["aircraft_type"] = "Unknown"
+    # else: leave aircraft_type out entirely. v10 disables this feature because it requires
+    # the tail number, which AeroDataBox does not publish for upcoming flights.
 
     if bool(cfg.get("add_aircraft_age", True)):
         df = add_aircraft_age(df, reg_csv=cfg.get("aircraft_registry_csv", "data/aircraft_registry_clean.csv"))

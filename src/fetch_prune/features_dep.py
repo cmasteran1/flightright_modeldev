@@ -1964,6 +1964,8 @@ def main():
         "LateAircraftDelay",
         "WeatherDelay",
         "CarrierDelay",
+        "Cancelled",
+        "Diverted",
     ]
     hist = _read_parquet_projected(hist_path, hist_cols_want)
 
@@ -1996,12 +1998,15 @@ def main():
         christmas_window=int(hw.get("christmas", 3)),
     )
 
-    if "aircraft_type" not in df.columns:
+    # v10: only inject the Unknown placeholder when the upstream blueprint enabled aircraft_type
+    # but FAA registry lookups missed. v10 disables aircraft_type entirely (cfg["add_aircraft_type"]
+    # is false in every v10 blueprint), so we skip the placeholder rather than poison the parquet.
+    if bool(cfg.get("add_aircraft_type", True)) and "aircraft_type" not in df.columns:
         df["aircraft_type"] = "Unknown"
 
     if "Aircraft_Age_Bucket" in df.columns:
         df["Aircraft_Age_Bucket"] = df["Aircraft_Age_Bucket"].astype(str).str.strip()
-    else:
+    elif bool(cfg.get("add_aircraft_age", True)):
         df["Aircraft_Age_Bucket"] = "Unknown"
 
     if "DepTimeBlk" in df.columns:
@@ -2027,7 +2032,12 @@ def main():
     df["flight_month"] = fd_dt.dt.month.astype("Int8")
 
     df = add_congestion_3h_features_from_history(df, hist)
-    df = add_tail_and_flightnum_time_features(df)
+    # add_tail_and_flightnum_time_features produces tail_leg_num_day, has_recent_arrival_turn_5h
+    # and flightnum_hours_since_first_departure_today. The first two require a tail number, which
+    # AeroDataBox does not publish at predict time, so v10 disables this whole block.
+    _tail_cfg_early = feat_cfg.get("tail_history") or {}
+    if _tail_cfg_early.get("enabled", True):
+        df = add_tail_and_flightnum_time_features(df)
 
     windows_days = feat_cfg.get("rolling_windows_days") or [7, 14, 21, 28]
     windows_days = [int(x) for x in windows_days]
