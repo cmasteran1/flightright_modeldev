@@ -2163,6 +2163,16 @@ def main():
     df.to_parquet(out_feat_path, index=False)
     print(f"[OK] wrote features unbalanced rows={len(df)} -> {out_feat_path}")
 
+    # v10: write a small descriptive-stats JSON next to the unbalanced parquet so every
+    # training run has a companion file with min/mean/median/std/P01/P50/P99/etc. per
+    # feature for sanity-checking distributions before training starts.
+    try:
+        from feature_stats import write_feature_stats_json  # noqa: E402
+    except ModuleNotFoundError:
+        from src.fetch_prune.feature_stats import write_feature_stats_json  # type: ignore  # noqa: E402
+    stats_path = write_feature_stats_json(df, out_feat_path)
+    print(f"[OK] wrote feature stats -> {stats_path}")
+
     fb = cfg.get("feature_balance") or {}
     if not bool(fb.get("enabled", True)):
         return

@@ -658,6 +658,7 @@ def main():
         registry[thr] = {
             "model_path": str(cat_model_path),
             "cal_path": str(cal_path),
+            "meta": meta,
         }
 
         # Free memory between thresholds
@@ -785,6 +786,8 @@ def main():
         "versions": _safe_versions(),
         # Keep the config used (useful for reproducibility)
         "config_used": cfg,
+        # Evaluation metrics for UI display
+        "bins_meta": bins_meta,
     }
 
     joblib.dump(bundle, deploy_path)

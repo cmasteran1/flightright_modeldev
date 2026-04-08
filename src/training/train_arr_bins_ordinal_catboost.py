@@ -626,7 +626,19 @@ def main():
         # Keep in-memory refs for bundling
         models[thr] = model
         calibrators[thr] = cal
-        registry[thr] = {"model_path": str(model_path), "cal_path": str(cal_path)}
+        registry[thr] = {
+            "model_path": str(model_path),
+            "cal_path": str(cal_path),
+            "meta": {
+                "threshold": thr,
+                "auc_cal_unbalanced": auc_cal_unbal,
+                "auc_test_balanced_sanity": auc_test_bal,
+                "auc_eval_unbalanced": auc_eval_unbal,
+                "threshold_youden": float(youden_thr),
+                "tpr_at_threshold": float(youden_tpr),
+                "fpr_at_threshold": float(youden_fpr),
+            },
+        }
 
         # Free training objects between thresholds to avoid OOM
         import gc as _gc
@@ -663,6 +675,20 @@ def main():
         [bin_labels[i] for i in pred_idx], categories=bin_labels, ordered=True
     )
 
+    # Compute bin-level logloss and accuracy for bins_meta
+    # Derive true_bin from binary threshold labels
+    y_ge = np.column_stack([
+        df_eval[f"y_arr_ge{thr}"].astype(int).values for thr in thresholds
+    ])  # shape (N, 4)
+    # true_bin: 0 = <15, 1 = 15-30, 2 = 30-45, 3 = 45-60, 4 = >=60
+    y_true_mc = y_ge.sum(axis=1)  # number of thresholds exceeded = bin index
+    try:
+        bins_logloss = float(log_loss(y_true_mc, Pbins, labels=list(range(len(bin_labels)))))
+    except Exception:
+        bins_logloss = float("nan")
+    bins_acc = float(accuracy_score(y_true_mc, pred_idx))
+    log(f"[BINS] eval logloss={bins_logloss:.4f}  acc={bins_acc:.4f}")
+
     eval_out_name = str(cfg.get("eval_output_parquet_name", "arr_eval_with_probs.parquet"))
     eval_out_path = outdir / eval_out_name
     df_eval_out.to_parquet(eval_out_path, index=False)
@@ -696,6 +722,15 @@ def main():
         "versions":             _safe_versions(),
         "preprocess":           {"categorical_na_value": "Unknown"},
         "config_used":          cfg,
+        "bins_meta": {
+            "bin_labels": bin_labels,
+            "thresholds": thresholds,
+            "eval_logloss": bins_logloss,
+            "eval_acc": bins_acc,
+            "bin_weights_minutes": list(bin_weights_minutes),
+            "severity_weights": list(severity_weights),
+            "feature_order": feature_order,
+        },
     }
 
     joblib.dump(bundle, deploy_path)
