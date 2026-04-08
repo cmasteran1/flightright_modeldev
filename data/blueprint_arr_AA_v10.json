@@ -1,0 +1,58 @@
+{
+  "_comment": "Blueprint: v10 AA arrival delay feature pipeline. Reads enriched parquet and history pool from blueprint_dep_AA_v10 step 1, and departure features from step 2. Strips wo_slip_* and airtime_*_d_* (both wheels-off-derived). Adds 14d arrdelay medians alongside the existing 7d median, and elapsed_time_ratio_last14d (gate-based, AeroDataBox-safe). Run features_arr.py only.",
+  "_workflow": {
+    "prerequisite": "Complete both steps of blueprint_dep_AA_v10.json first.",
+    "step_1": "python src/fetch_prune/features_arr.py data/blueprint_arr_AA_v10.json"
+  },
+  "_path_note": "All data paths use '../flightrightdata/data/...' (REPO_ROOT-relative) because features_arr.py resolves all paths against REPO_ROOT.",
+  "target": "arr",
+  "output_enriched_unbalanced_path": "../flightrightdata/data/intermediate/AA_v10_unbalanced.parquet",
+  "history_output_path": "../flightrightdata/data/intermediate/history_pool_dep_AA_v10.parquet",
+  "start_date": "2024-01-01",
+  "end_date": "2025-11-30",
+  "dep_features_unbalanced_path": "../flightrightdata/data/processed/features_dep_AA_v10_unbalanced.parquet",
+  "thresholds": [
+    15,
+    30,
+    45,
+    60
+  ],
+  "dest_weather": {
+    "enabled": true,
+    "airports_csv": "../flightrightdata/data/meta/airports.csv",
+    "hourly_cache_dir": "../flightrightdata/weather_cache_dest_hourly",
+    "historical_cache_dir": "../flightrightdata/weather_cache_historical"
+  },
+  "arrdelay_median_14d": {
+    "enabled": true
+  },
+  "recent_airtime": {
+    "enabled": false
+  },
+  "wheels_off_slip": {
+    "enabled": false
+  },
+  "elapsed_time_ratio": {
+    "enabled": true
+  },
+  "output_features_unbalanced_path": "../flightrightdata/data/processed/features_arr_AA_v10_unbalanced.parquet",
+  "feature_balance": {
+    "enabled": true,
+    "eval": {
+      "enabled": true,
+      "by": "random",
+      "eval_frac": 0.15,
+      "seed": 42,
+      "output_path": "../flightrightdata/data/processed/features_arr_AA_v10_eval_unbalanced.parquet"
+    },
+    "thresholds": [
+      15,
+      30,
+      45,
+      60
+    ],
+    "pos_frac": 0.5,
+    "seed": 42,
+    "output_template": "../flightrightdata/data/processed/train_arr_ge{thr}_balanced_AA_v10.parquet"
+  }
+}

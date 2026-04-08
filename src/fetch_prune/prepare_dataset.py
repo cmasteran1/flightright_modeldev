@@ -233,6 +233,8 @@ def read_input_parquet(input_flights_path: List[str], cfg: Optional[dict] = None
         "SecurityDelay",
         "LateAircraftDelay",
         "Cancelled",
+        "Diverted",
+        "ActualElapsedTime",
     }
 
     out_parts: List[pd.DataFrame] = []
@@ -1680,6 +1682,10 @@ def build_and_write_history_pool(cfg: dict) -> Optional[Path]:
         "NASDelay",
         "SecurityDelay",
         "LateAircraftDelay",
+        "Cancelled",
+        "Diverted",
+        "ActualElapsedTime",
+        "CRSElapsedTime",
     ]:
         if c in hist.columns:
             hist[c] = pd.to_numeric(hist[c], errors="coerce")
@@ -1725,11 +1731,13 @@ def build_and_write_history_pool(cfg: dict) -> Optional[Path]:
         "ArrDelayMinutes",
         "CRSDepTime",
         "CRSArrTime",
+        "CRSElapsedTime",
         "dep_dt_local",
         "dep_local_date",
         "arr_dt_local",
         "arr_local_date",
         "AirTime",
+        "ActualElapsedTime",
         "WheelsOff",
         "WheelsOn",
         "TaxiOut",
@@ -1738,6 +1746,8 @@ def build_and_write_history_pool(cfg: dict) -> Optional[Path]:
         "WeatherDelay",
         "NASDelay",
         "LateAircraftDelay",
+        "Cancelled",
+        "Diverted",
     ]
     keep = [c for c in keep if c in hist.columns]
     hist = hist[keep].copy()

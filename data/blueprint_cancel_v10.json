@@ -1,0 +1,65 @@
+{
+  "_comment": "Blueprint: v10 cancellation model data preparation. Cross-airline binary classifier. Same training window as v9 (2022 onward for sufficient cancelled samples), but tail-number features are disabled (AeroDataBox cannot supply tail at predict time) and the v10 hybrid mean/median + AeroDataBox aggregates are switched on.",
+  "_workflow": {
+    "run": "python src/fetch_prune/prepare_cancel_dataset.py data/blueprint_cancel_v10.json"
+  },
+
+  "input_flights_path": "data/raw_bts/",
+  "history_flights_path": "data/raw_bts/",
+
+  "airlines": ["WN", "DL", "AA", "UA"],
+  "start_date": "2022-01-01",
+  "end_date": "2025-11-30",
+
+  "weather": {
+    "daily": {
+      "enabled": true,
+      "cache_dir": "data/weather_cache/daily"
+    },
+    "hourly_at_departure": {
+      "enabled": true,
+      "cache_dir": "data/weather_cache/hourly"
+    }
+  },
+
+  "strike": {
+    "enabled": true,
+    "cache_path": "data/strike_cache.json"
+  },
+
+  "features_dep": {
+    "tail_and_flightnum_time": false,
+    "tail_history": {
+      "enabled": false
+    },
+    "hub_spillover": {
+      "enabled": true,
+      "hubs": ["ATL", "DEN", "DFW", "ORD", "EWR"]
+    },
+    "flightnum_od": {
+      "n_recent": 20,
+      "lookback_days": 14
+    },
+
+    "delay_median_last1": { "enabled": true },
+    "nas_rate_last1d":    { "enabled": true },
+    "cancel_rate_last1d": { "enabled": true },
+    "divert_rate_last14d":{ "enabled": true }
+  },
+
+  "output_features_unbalanced_path": "data/processed/features_cancel_all_v10_unbalanced.parquet",
+
+  "feature_balance": {
+    "eval": {
+      "enabled": true,
+      "eval_frac": 0.15,
+      "output_path": "data/processed/features_cancel_all_v10_eval_unbalanced.parquet"
+    }
+  },
+
+  "balance": {
+    "pos_frac": 0.20,
+    "seed": 42,
+    "output_path": "data/processed/train_cancel_balanced_v10.parquet"
+  }
+}

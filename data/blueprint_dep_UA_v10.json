@@ -1,0 +1,124 @@
+{
+  "_comment": "Blueprint: v10 WN departure delay feature pipeline. Starts from v8 (which performed better in production than v9), strips every tail-number-derived feature (AeroDataBox does not publish tail numbers for upcoming flights), strips wheels-off-derived features (no actual gate or wheels-off times either), and adds: (a) median-last1 path for delay baselines so a single severe delay no longer dominates the daily statistic, and (b) three new AeroDataBox-compatible aggregates (origin_nasdelay_rate_last1d, cancel_rate_origin_last1d, divert_rate_origin_last14d) that come from BTS history but can be served from AeroDataBox at predict time. Hub: hub_0=DEN, hub_1=PHX, hub_2=BWI, hub_3=MDW, hub_4=BNA.",
+  "_workflow": {
+    "step_0": "python src/fetch_prune/collect_strike_cache.py",
+    "step_1": "python src/fetch_prune/prepare_dataset.py data/blueprint_dep_UA_v10.json",
+    "step_2": "python src/fetch_prune/features_dep.py    data/blueprint_dep_UA_v10.json"
+  },
+  "_path_note": "Output paths use 'data/...' (resolved against DATA_ROOT = ../flightrightdata/). Input/meta paths use '../flightrightdata/data/...' (resolved against REPO_ROOT).",
+  "target": "dep",
+  "input_flights_path": [
+    "../flightrightdata/data/raw_bts/Year=2024/Month=*/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2025/Month=*/flights.parquet"
+  ],
+  "history_flights_path": [
+    "../flightrightdata/data/raw_bts/Year=2023/Month=1[1-2]/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2024/Month=*/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2025/Month=*/flights.parquet"
+  ],
+  "airports_csv": "../flightrightdata/data/meta/airports.csv",
+  "airports_filter_csv": "../flightrightdata/data/meta/airport_rankings/UA_top_100.csv",
+  "airlines": [
+    "UA"
+  ],
+  "start_date": "2024-01-01",
+  "end_date": "2025-11-30",
+  "weather": {
+    "daily": true,
+    "hourly_at_dep": true,
+    "dest_daily": false,
+    "dest_hourly_at_arr": false,
+    "cache_dir": "../flightrightdata/weather_cache",
+    "hourly_cache_dir": "../flightrightdata/weather_cache_hourly",
+    "historical_cache_dir": "../flightrightdata/weather_cache_historical"
+  },
+  "strike": {
+    "enabled": true,
+    "cache_path": "../flightrightdata/strike_cache/us_aviation_labor_actions.parquet"
+  },
+  "add_aircraft_type": false,
+  "add_aircraft_age": false,
+  "history_lookback_days": 60,
+  "output_enriched_unbalanced_path": "data/intermediate/UA_v10_unbalanced.parquet",
+  "history_output_path": "data/intermediate/history_pool_dep_UA_v10.parquet",
+  "features_dep": {
+    "holiday_windows": {
+      "thanksgiving": 2,
+      "christmas": 3
+    },
+    "n_recent_flightnum_od": 30,
+    "low_support_leq": 2,
+    "rolling_windows_days": [
+      1,
+      7,
+      14
+    ],
+    "hub_spillover": {
+      "airline": "UA",
+      "hubs": [
+        "EWR",
+        "IAH",
+        "ORD",
+        "DEN",
+        "SFO"
+      ]
+    },
+    "hub_weather": {
+      "enabled": false
+    },
+    "tail_history": {
+      "enabled": false
+    },
+    "dest_rolling": {
+      "enabled": true
+    },
+    "prior_leg": {
+      "enabled": false
+    },
+    "strike": {
+      "enabled": true,
+      "cache_path": "../flightrightdata/strike_cache/us_aviation_labor_actions.parquet"
+    },
+    "delay_median_last1": {
+      "enabled": true
+    },
+    "nas_rate_last1d": {
+      "enabled": true
+    },
+    "cancel_rate_last1d": {
+      "enabled": true
+    },
+    "divert_rate_last14d": {
+      "enabled": true
+    }
+  },
+  "output_features_unbalanced_path": "data/processed/features_dep_UA_v10_unbalanced.parquet",
+  "balance": {
+    "thresholds": [
+      15,
+      30,
+      45,
+      60
+    ],
+    "delay_col": "DepDelayMinutes"
+  },
+  "feature_balance": {
+    "enabled": true,
+    "eval": {
+      "enabled": true,
+      "by": "random",
+      "eval_frac": 0.15,
+      "seed": 42,
+      "output_path": "data/processed/features_dep_UA_v10_eval_unbalanced.parquet"
+    },
+    "thresholds": [
+      15,
+      30,
+      45,
+      60
+    ],
+    "pos_frac": 0.5,
+    "seed": 42,
+    "output_template": "data/processed/train_dep_ge{thr}_balanced_UA_v10.parquet"
+  }
+}

@@ -989,6 +989,219 @@ def add_wn_hub_spillover_from_history(
 add_hub_spillover_from_history = add_wn_hub_spillover_from_history
 
 
+# ------------------------------ v10 features: median-last1 baselines ------------------------------
+
+def _daily_median_by(
+    hist: pd.DataFrame, group_cols: List[str], value_col: str
+) -> pd.DataFrame:
+    """Median of `value_col` over individual flight rows, grouped by group_cols + FlightDate.
+    Used for the v10 hybrid 'median for last1, mean for last7/last14' rule on delay baselines.
+    Unlike the rolling-mean-of-daily-means path, this preserves flight-level distributional info
+    so a single huge delay no longer drags the daily statistic up the way it would for a mean.
+    """
+    h = hist.copy()
+    h["FlightDate"] = pd.to_datetime(h.get("FlightDate"), errors="coerce").dt.normalize()
+    for c in group_cols:
+        if c in h.columns:
+            h[c] = h[c].astype(str).str.upper().str.strip()
+    h[value_col] = pd.to_numeric(h.get(value_col), errors="coerce")
+    h = h.dropna(subset=group_cols + ["FlightDate", value_col]).copy()
+    if h.empty:
+        return pd.DataFrame(columns=group_cols + ["FlightDate", "_median"])
+    daily_med = (
+        h.groupby(group_cols + ["FlightDate"], as_index=False)[value_col]
+        .median()
+        .rename(columns={value_col: "_median"})
+        .sort_values(group_cols + ["FlightDate"])
+    )
+    return daily_med
+
+
+def _attach_shifted_daily_median(
+    df: pd.DataFrame,
+    daily_med: pd.DataFrame,
+    group_cols: List[str],
+    out_col: str,
+) -> pd.DataFrame:
+    """Shift daily medians forward by one day (so today's feature only sees yesterday's flights),
+    then merge onto df by group_cols + FlightDate. group_cols may be empty for an unkeyed merge."""
+    df = df.copy()
+    df["FlightDate"] = pd.to_datetime(df["FlightDate"], errors="coerce").dt.normalize()
+    for c in group_cols:
+        if c in df.columns:
+            df[c] = df[c].astype(str).str.upper().str.strip()
+
+    if daily_med.empty:
+        df[out_col] = np.nan
+        return df
+
+    dm = daily_med.copy()
+    if group_cols:
+        dm["FlightDate"] = dm["FlightDate"] + pd.Timedelta(days=1)
+        dm = dm.rename(columns={"_median": out_col})
+        df = df.merge(dm[group_cols + ["FlightDate", out_col]],
+                      on=group_cols + ["FlightDate"], how="left")
+    else:
+        dm["FlightDate"] = dm["FlightDate"] + pd.Timedelta(days=1)
+        dm = dm.rename(columns={"_median": out_col})
+        df = df.merge(dm[["FlightDate", out_col]], on="FlightDate", how="left")
+    return df
+
+
+def add_carrier_dep_delay_median_last1(df: pd.DataFrame, hist: pd.DataFrame) -> pd.DataFrame:
+    """Emit `carrier_depdelay_median_last1` and `carrier_origin_depdelay_median_last1`,
+    each computed as the median over individual flight DepDelayMinutes for the previous day."""
+    carrier_med = _daily_median_by(hist, ["Reporting_Airline"], "DepDelayMinutes")
+    df = _attach_shifted_daily_median(df, carrier_med, ["Reporting_Airline"], "carrier_depdelay_median_last1")
+
+    carr_org_med = _daily_median_by(hist, ["Reporting_Airline", "Origin"], "DepDelayMinutes")
+    df = _attach_shifted_daily_median(df, carr_org_med, ["Reporting_Airline", "Origin"], "carrier_origin_depdelay_median_last1")
+    return df
+
+
+def add_dest_depdelay_median_last1(df: pd.DataFrame, hist: pd.DataFrame) -> pd.DataFrame:
+    """Emit `dest_depdelay_median_last1`: median over flight rows at the destination airport
+    on the previous day. Built from BTS DepDelayMinutes keyed on Origin (since the historical
+    pool sees an airport as an Origin), then merged onto df by Dest."""
+    dest_med = _daily_median_by(hist, ["Origin"], "DepDelayMinutes")
+    if dest_med.empty:
+        df = df.copy()
+        df["dest_depdelay_median_last1"] = np.nan
+        return df
+    dest_med = dest_med.rename(columns={"Origin": "Dest"})
+    df = _attach_shifted_daily_median(df, dest_med, ["Dest"], "dest_depdelay_median_last1")
+    return df
+
+
+def add_hub_depdelay_median_last1(
+    df: pd.DataFrame,
+    hist: pd.DataFrame,
+    hubs: List[str],
+) -> pd.DataFrame:
+    """Emit `hub_{i}_depdelay_median_last1` for each hub, replacing the v8 mean-of-daily-mean
+    formulation for the 1-day window. Longer windows continue to use the existing mean path."""
+    df = df.copy()
+    hubs = [str(h).upper().strip() for h in (hubs or [])]
+    if not hubs:
+        for i in range(5):
+            df[f"hub_{i}_depdelay_median_last1"] = np.nan
+        return df
+
+    h = hist.copy()
+    h["FlightDate"] = pd.to_datetime(h.get("FlightDate"), errors="coerce").dt.normalize()
+    h["Origin"] = h.get("Origin", "").astype(str).str.upper().str.strip()
+    h["DepDelayMinutes"] = pd.to_numeric(h.get("DepDelayMinutes"), errors="coerce")
+    h = h[h["Origin"].isin(hubs)].dropna(subset=["FlightDate", "DepDelayMinutes"])
+
+    daily_med = (
+        h.groupby(["Origin", "FlightDate"], as_index=False)["DepDelayMinutes"]
+        .median()
+        .rename(columns={"DepDelayMinutes": "_median"})
+    )
+    daily_med["FlightDate"] = daily_med["FlightDate"] + pd.Timedelta(days=1)
+
+    df["FlightDate"] = pd.to_datetime(df["FlightDate"], errors="coerce").dt.normalize()
+    for i, hub in enumerate(hubs):
+        sub = daily_med[daily_med["Origin"] == hub][["FlightDate", "_median"]].rename(
+            columns={"_median": f"hub_{i}_depdelay_median_last1"}
+        )
+        df = df.merge(sub, on="FlightDate", how="left")
+    return df
+
+
+# ------------------------------ v10 features: AeroDataBox-compatible aggregates ------------------------------
+
+def add_origin_nasdelay_rate_last1d(df: pd.DataFrame, hist: pd.DataFrame) -> pd.DataFrame:
+    """Fraction of flights at the origin airport with NASDelay > 0 over the previous 1 day.
+    Captures day-over-day spikes in ATC-driven delay that the longer 7d window smooths away."""
+    h = hist.copy()
+    h["FlightDate"] = pd.to_datetime(h.get("FlightDate"), errors="coerce").dt.normalize()
+    h["Origin"] = h.get("Origin", "").astype(str).str.upper().str.strip()
+    if "NASDelay" not in h.columns:
+        df = df.copy()
+        df["origin_nasdelay_rate_last1d"] = np.nan
+        return df
+    h["NASDelay"] = pd.to_numeric(h["NASDelay"], errors="coerce")
+    h = h.dropna(subset=["FlightDate", "Origin"]).copy()
+    h["_has_nas"] = (h["NASDelay"] > 0).astype(float)
+
+    daily = (
+        h.groupby(["Origin", "FlightDate"], as_index=False)["_has_nas"]
+        .mean()
+        .rename(columns={"_has_nas": "origin_nasdelay_rate_last1d"})
+    )
+    daily["FlightDate"] = daily["FlightDate"] + pd.Timedelta(days=1)
+
+    df = df.copy()
+    df["FlightDate"] = pd.to_datetime(df["FlightDate"], errors="coerce").dt.normalize()
+    df["Origin"] = df["Origin"].astype(str).str.upper().str.strip()
+    df = df.merge(daily, on=["Origin", "FlightDate"], how="left")
+    return df
+
+
+def add_cancel_rate_origin_last1d(df: pd.DataFrame, hist: pd.DataFrame) -> pd.DataFrame:
+    """Fraction of flights at origin marked Cancelled over the previous 1 day.
+    Captures a disruption mechanism orthogonal to delay magnitudes — a high-cancellation
+    day signals gate, crew, and rebooking chaos that pushes surviving flights late."""
+    h = hist.copy()
+    h["FlightDate"] = pd.to_datetime(h.get("FlightDate"), errors="coerce").dt.normalize()
+    h["Origin"] = h.get("Origin", "").astype(str).str.upper().str.strip()
+    if "Cancelled" not in h.columns:
+        df = df.copy()
+        df["cancel_rate_origin_last1d"] = np.nan
+        return df
+    h["Cancelled"] = pd.to_numeric(h["Cancelled"], errors="coerce").fillna(0.0)
+    h = h.dropna(subset=["FlightDate", "Origin"]).copy()
+
+    daily = (
+        h.groupby(["Origin", "FlightDate"], as_index=False)["Cancelled"]
+        .mean()
+        .rename(columns={"Cancelled": "cancel_rate_origin_last1d"})
+    )
+    daily["FlightDate"] = daily["FlightDate"] + pd.Timedelta(days=1)
+
+    df = df.copy()
+    df["FlightDate"] = pd.to_datetime(df["FlightDate"], errors="coerce").dt.normalize()
+    df["Origin"] = df["Origin"].astype(str).str.upper().str.strip()
+    df = df.merge(daily, on=["Origin", "FlightDate"], how="left")
+    return df
+
+
+def add_divert_rate_origin_last14d(df: pd.DataFrame, hist: pd.DataFrame) -> pd.DataFrame:
+    """Fraction of flights at origin marked Diverted over the previous 14 days.
+    Captures lingering ripple effects of severe disruption events (weather, ground stops)."""
+    h = hist.copy()
+    h["FlightDate"] = pd.to_datetime(h.get("FlightDate"), errors="coerce").dt.normalize()
+    h["Origin"] = h.get("Origin", "").astype(str).str.upper().str.strip()
+    if "Diverted" not in h.columns:
+        df = df.copy()
+        df["divert_rate_origin_last14d"] = np.nan
+        return df
+    h["Diverted"] = pd.to_numeric(h["Diverted"], errors="coerce").fillna(0.0)
+    h = h.dropna(subset=["FlightDate", "Origin"]).copy()
+
+    daily = (
+        h.groupby(["Origin", "FlightDate"], as_index=False)["Diverted"]
+        .mean()
+        .sort_values(["Origin", "FlightDate"])
+    )
+    daily["divert_rate_origin_last14d"] = (
+        daily.groupby("Origin")["Diverted"]
+        .apply(lambda s: s.shift(1).rolling(window=14, min_periods=1).mean())
+        .reset_index(level=0, drop=True)
+    )
+
+    df = df.copy()
+    df["FlightDate"] = pd.to_datetime(df["FlightDate"], errors="coerce").dt.normalize()
+    df["Origin"] = df["Origin"].astype(str).str.upper().str.strip()
+    df = df.merge(
+        daily[["Origin", "FlightDate", "divert_rate_origin_last14d"]],
+        on=["Origin", "FlightDate"],
+        how="left",
+    )
+    return df
+
+
 WN_HUB_COORDS: Dict[str, Tuple[float, float, str]] = {
     "DEN": (39.8561, -104.6737, "America/Denver"),
     "PHX": (33.4373, -112.0078, "America/Phoenix"),
@@ -1834,6 +2047,31 @@ def main():
     df = add_origin_dep_delay_baselines_from_history_multi(df, hist, windows_days=windows_days)
     df = add_delay_cause_rates_from_history(df, hist, windows_days=windows_days)
 
+    # v10: hybrid mean/median rule. Replaces the rolling-mean-of-daily-means at the 1-day window
+    # with a true median over the previous day's flight rows. Reduces the pessimism v9 saw on
+    # bad ops days where a small number of severe delays dominated the daily mean.
+    median_last1_cfg = feat_cfg.get("delay_median_last1") or {}
+    if median_last1_cfg.get("enabled", False):
+        print("[INFO] v10: computing median-last1 baselines for carrier/dest/hub")
+        df = add_carrier_dep_delay_median_last1(df, hist)
+        df = add_dest_depdelay_median_last1(df, hist)
+        # Hub list resolved further down; resolve here too so the median path matches.
+        _hub_cfg = feat_cfg.get("hub_spillover") or {}
+        _hub_hubs = _hub_cfg.get("hubs") or AIRLINE_HUB_PRESETS.get(str(_hub_cfg.get("airline") or "WN").upper())
+        df = add_hub_depdelay_median_last1(df, hist, hubs=_hub_hubs or [])
+
+    # v10: AeroDataBox-compatible aggregates. Each is gated by its own feature flag so v8
+    # pipelines stay byte-identical when the flag is absent.
+    if (feat_cfg.get("nas_rate_last1d") or {}).get("enabled", False):
+        print("[INFO] v10: computing origin_nasdelay_rate_last1d")
+        df = add_origin_nasdelay_rate_last1d(df, hist)
+    if (feat_cfg.get("cancel_rate_last1d") or {}).get("enabled", False):
+        print("[INFO] v10: computing cancel_rate_origin_last1d")
+        df = add_cancel_rate_origin_last1d(df, hist)
+    if (feat_cfg.get("divert_rate_last14d") or {}).get("enabled", False):
+        print("[INFO] v10: computing divert_rate_origin_last14d")
+        df = add_divert_rate_origin_last14d(df, hist)
+
     strike_cfg = feat_cfg.get("strike") or {}
     if strike_cfg.get("enabled", False):
         strike_cache = strike_cfg.get("cache_path", "../flightrightdata/strike_cache/us_aviation_labor_actions.parquet")
@@ -1881,8 +2119,12 @@ def main():
         wx_cache = wx_cfg.get("cache_dir") or "weather_cache"
         df = add_wn_hub_weather_from_openmeteo(df, hubs=wx_hubs, cache_dir=wx_cache)
 
-    df = add_turn_time_hours(df)
-    df = add_tail_cascade_features(df)
+    # Tail-derived cascade features depend on knowing the aircraft tail number at predict time.
+    # AeroDataBox does not publish a usable tail number for upcoming flights, so v10 disables
+    # these features. Older v8/v9 pipelines keep them enabled by default.
+    if tail_cfg.get("enabled", True):
+        df = add_turn_time_hours(df)
+        df = add_tail_cascade_features(df)
 
     prior_leg_cfg = feat_cfg.get("prior_leg") or {}
     if prior_leg_cfg.get("enabled", True):

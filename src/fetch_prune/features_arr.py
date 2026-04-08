@@ -19,6 +19,10 @@ DATA_ROOT = (REPO_ROOT.parent / "flightrightdata").resolve()
 
 MEAN_WINDOWS = [7, 14]
 MEDIAN_WINDOWS = [7]
+# v10 hybrid mean/median rule: route arrival-delay history adds 14d medians alongside the
+# 7d median that v8 already produced, so the model has a stable median signal at the longer
+# window without giving up the v8 mean features. Toggle via cfg["arrdelay_median_14d"]["enabled"].
+MEDIAN_WINDOWS_V10 = [7, 14]
 THRESHOLDS_DEFAULT = [15, 30, 45, 60]
 
 
@@ -174,9 +178,12 @@ def _rolling_tbl_median(hist: pd.DataFrame, keys: List[str], value_col: str, win
     return out
 
 
-def add_route_arrival_delay_stats(df: pd.DataFrame, hist: pd.DataFrame) -> pd.DataFrame:
+def add_route_arrival_delay_stats(df: pd.DataFrame, hist: pd.DataFrame, median_windows: Optional[List[int]] = None) -> pd.DataFrame:
     df = _ensure_base_types(df)
     hist = _ensure_base_types(hist)
+
+    if median_windows is None:
+        median_windows = MEDIAN_WINDOWS
 
     keys_fn = ["Reporting_Airline", "Flight_Number_Reporting_Airline", "Origin", "Dest"]
     hist_fn = _prefilter_hist(hist, df, keys_fn)
@@ -189,11 +196,14 @@ def add_route_arrival_delay_stats(df: pd.DataFrame, hist: pd.DataFrame) -> pd.Da
         del tbl
         gc.collect()
 
-    tbl = _rolling_tbl_median(hist_fn, keys_fn, "ArrDelayMinutes", 7, prefix="arrdelay_").rename(
-        columns={"arrdelay_median_7d": "arrdelay_median_7d_fn_od"}
-    )
-    df = _attach_asof(df, tbl, keys_fn)
-    del tbl, hist_fn
+    for w in median_windows:
+        tbl = _rolling_tbl_median(hist_fn, keys_fn, "ArrDelayMinutes", w, prefix="arrdelay_").rename(
+            columns={f"arrdelay_median_{w}d": f"arrdelay_median_{w}d_fn_od"}
+        )
+        df = _attach_asof(df, tbl, keys_fn)
+        del tbl
+        gc.collect()
+    del hist_fn
     gc.collect()
 
     keys_car = ["Reporting_Airline", "Origin", "Dest"]
@@ -207,13 +217,48 @@ def add_route_arrival_delay_stats(df: pd.DataFrame, hist: pd.DataFrame) -> pd.Da
         del tbl
         gc.collect()
 
-    tbl = _rolling_tbl_median(hist_car, keys_car, "ArrDelayMinutes", 7, prefix="arrdelay_").rename(
-        columns={"arrdelay_median_7d": "arrdelay_median_7d_car_od"}
-    )
-    df = _attach_asof(df, tbl, keys_car)
-    del tbl, hist_car
+    for w in median_windows:
+        tbl = _rolling_tbl_median(hist_car, keys_car, "ArrDelayMinutes", w, prefix="arrdelay_").rename(
+            columns={f"arrdelay_median_{w}d": f"arrdelay_median_{w}d_car_od"}
+        )
+        df = _attach_asof(df, tbl, keys_car)
+        del tbl
+        gc.collect()
+    del hist_car
     gc.collect()
 
+    return df
+
+
+def add_elapsed_time_ratio_stats(df: pd.DataFrame, hist: pd.DataFrame, window_days: int = 14) -> pd.DataFrame:
+    """Rolling mean of `ActualElapsedTime / CRSElapsedTime` for (Airline, FlightNum, Origin, Dest)
+    over the previous `window_days`. Both inputs are gate-based BTS fields, so this feature does
+    NOT depend on WheelsOff/WheelsOn and is safe under the v10 AeroDataBox constraint."""
+    df = _ensure_base_types(df)
+    hist = _ensure_base_types(hist)
+
+    if "ActualElapsedTime" not in hist.columns or "CRSElapsedTime" not in hist.columns:
+        df = df.copy()
+        df[f"elapsed_time_ratio_last{window_days}d"] = np.nan
+        return df
+
+    h = hist.copy()
+    h["ActualElapsedTime"] = pd.to_numeric(h["ActualElapsedTime"], errors="coerce")
+    h["CRSElapsedTime"] = pd.to_numeric(h["CRSElapsedTime"], errors="coerce").replace(0, np.nan)
+    h["_elapsed_ratio"] = h["ActualElapsedTime"] / h["CRSElapsedTime"]
+    h = h.dropna(subset=["_elapsed_ratio"]).copy()
+
+    keys_fn = ["Reporting_Airline", "Flight_Number_Reporting_Airline", "Origin", "Dest"]
+    hist_fn = _prefilter_hist(h, df, keys_fn)
+    tbl = _rolling_tbl_mean_count(hist_fn, keys_fn, "_elapsed_ratio", window_days, prefix="elapsed_time_ratio_").rename(
+        columns={
+            f"elapsed_time_ratio_mean_{window_days}d": f"elapsed_time_ratio_last{window_days}d",
+            f"elapsed_time_ratio_count_{window_days}d": f"elapsed_time_ratio_n_last{window_days}d",
+        }
+    )
+    df = _attach_asof(df, tbl, keys_fn)
+    del tbl, hist_fn, h
+    gc.collect()
     return df
 
 
@@ -648,12 +693,20 @@ def main(cfg_path: str) -> None:
         df["sched_arr_hour"] = pd.to_numeric(df.get("CRSArrTime"), errors="coerce").floordiv(100).astype("Int8")
 
     print(f"[INFO] Reading history pool: {history_path}")
-    need_hist = [
+    need_hist_want = [
         "FlightDate", "Reporting_Airline", "Flight_Number_Reporting_Airline", "Origin", "Dest",
         "CRSDepTime", "ArrDelayMinutes", "AirTime", "WheelsOff",
+        "ActualElapsedTime", "CRSElapsedTime",
     ]
+    import pyarrow.parquet as _pq_h
+    _avail_hist = set(_pq_h.read_schema(str(history_path)).names)
+    need_hist = [c for c in need_hist_want if c in _avail_hist]
     hist = pd.read_parquet(history_path, columns=need_hist)
     hist = _ensure_base_types(hist)
+    if "ActualElapsedTime" in hist.columns:
+        hist["ActualElapsedTime"] = pd.to_numeric(hist["ActualElapsedTime"], errors="coerce")
+    if "CRSElapsedTime" in hist.columns:
+        hist["CRSElapsedTime"] = pd.to_numeric(hist["CRSElapsedTime"], errors="coerce")
 
     df_start = df["FlightDate"].min()
     df_end = df["FlightDate"].max()
@@ -661,9 +714,28 @@ def main(cfg_path: str) -> None:
         hist = hist[(hist["FlightDate"] >= (df_start - pd.Timedelta(days=14))) & (hist["FlightDate"] <= df_end)].copy()
         gc.collect()
 
-    df = add_route_arrival_delay_stats(df, hist); gc.collect()
-    df = add_recent_airtime_stats(df, hist); gc.collect()
-    df = add_recent_wheels_off_slip_stats(df, hist); gc.collect()
+    # v10: 14d medians for arrdelay route stats. Gated by cfg["arrdelay_median_14d"]["enabled"];
+    # default off so v8 pipelines remain byte-identical.
+    arrmed14_cfg = cfg.get("arrdelay_median_14d") or {}
+    arrmed_windows = MEDIAN_WINDOWS_V10 if arrmed14_cfg.get("enabled", False) else MEDIAN_WINDOWS
+    df = add_route_arrival_delay_stats(df, hist, median_windows=arrmed_windows); gc.collect()
+
+    # v10: airtime and wheels-off slip features depend on AirTime / WheelsOff, both of which
+    # cannot be sourced from AeroDataBox at predict time. Gate them so v10 pipelines skip them.
+    if (cfg.get("recent_airtime") or {}).get("enabled", True):
+        df = add_recent_airtime_stats(df, hist); gc.collect()
+    else:
+        print("[INFO] v10: recent_airtime disabled (skipping airtime_*_d_* features)")
+    if (cfg.get("wheels_off_slip") or {}).get("enabled", True):
+        df = add_recent_wheels_off_slip_stats(df, hist); gc.collect()
+    else:
+        print("[INFO] v10: wheels_off_slip disabled (skipping wo_slip_*_d_* features)")
+
+    # v10: elapsed_time_ratio_last14d uses ActualElapsedTime / CRSElapsedTime, both gate-based
+    # BTS fields. Safe under the AeroDataBox constraint. Gated by cfg["elapsed_time_ratio"]["enabled"].
+    if (cfg.get("elapsed_time_ratio") or {}).get("enabled", False):
+        df = add_elapsed_time_ratio_stats(df, hist, window_days=14); gc.collect()
+
     df = add_projected_arrival_congestion(df); gc.collect()
     df = merge_dep_features(df, cfg); gc.collect()
     df = add_arrival_labels(df, thresholds)

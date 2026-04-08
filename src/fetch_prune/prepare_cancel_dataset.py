@@ -42,6 +42,12 @@ from features_dep import (
     add_carrier_delay_rate_anomaly,
     add_wind_x_precip,
     add_dep_labels_for_thresholds,
+    add_carrier_dep_delay_median_last1,
+    add_dest_depdelay_median_last1,
+    add_hub_depdelay_median_last1,
+    add_origin_nasdelay_rate_last1d,
+    add_cancel_rate_origin_last1d,
+    add_divert_rate_origin_last14d,
 )
 
 
@@ -61,7 +67,7 @@ _KEEP_COLS = {
     "WheelsOff", "WheelsOn", "TaxiOut", "TaxiIn",
     "DepTimeBlk", "Distance",
     "CarrierDelay", "WeatherDelay", "NASDelay", "SecurityDelay", "LateAircraftDelay",
-    "Cancelled",
+    "Cancelled", "Diverted", "ActualElapsedTime",
 }
 
 
@@ -182,11 +188,11 @@ def main():
     # Trim history pool to only columns needed for rolling lookups (saves ~60% memory)
     _HIST_COLS = [
         "FlightDate", "Reporting_Airline", "Flight_Number_Reporting_Airline",
-        "Origin", "Dest", "CRSDepTime", "CRSArrTime",
+        "Origin", "Dest", "CRSDepTime", "CRSArrTime", "CRSElapsedTime",
         "DepDelayMinutes", "ArrDelayMinutes", "DepDel15", "ArrDel15",
         "Tail_Number", "Distance", "DepTimeBlk",
         "CarrierDelay", "WeatherDelay", "NASDelay", "SecurityDelay", "LateAircraftDelay",
-        "Cancelled", "dep_dt_local",
+        "Cancelled", "Diverted", "ActualElapsedTime", "dep_dt_local",
     ]
     hist_cols_avail = [c for c in _HIST_COLS if c in df.columns]
     df_full = df  # keep reference before overwriting df
@@ -240,6 +246,8 @@ def main():
         print("[INFO] Adding tail/flightnum time features...")
         df = add_tail_and_flightnum_time_features(df)
         df = add_turn_time_hours(df)
+    else:
+        print("[INFO] v10: tail/flightnum time features disabled")
 
     print("[INFO] Adding weather features...")
     weather_cfg = bp.get("weather", {})
@@ -285,6 +293,27 @@ def main():
         tail_windows = tail_hist_cfg.get("windows", [1, 14])
         print(f"[INFO] Adding tail rolling history (windows={tail_windows})...")
         df = add_tail_rolling_history(df, df_hist, windows_days=tail_windows)
+
+    # v10: hybrid mean/median for the 1-day window. Adds *_median_last1 alongside the v8/v9
+    # *_mean_last1 columns; the training config picks whichever set it wants to expose to the
+    # model. Defaults off so v9 pipelines stay byte-identical.
+    if (feat_cfg.get("delay_median_last1") or {}).get("enabled", False):
+        print("[INFO] v10: computing median-last1 baselines for cancel pipeline")
+        df = add_carrier_dep_delay_median_last1(df, df_hist)
+        df = add_dest_depdelay_median_last1(df, df_hist)
+        _hub_cfg = feat_cfg.get("hub_spillover") or {}
+        _hub_hubs = _hub_cfg.get("hubs") or []
+        df = add_hub_depdelay_median_last1(df, df_hist, hubs=_hub_hubs)
+
+    if (feat_cfg.get("nas_rate_last1d") or {}).get("enabled", False):
+        print("[INFO] v10: computing origin_nasdelay_rate_last1d")
+        df = add_origin_nasdelay_rate_last1d(df, df_hist)
+    if (feat_cfg.get("cancel_rate_last1d") or {}).get("enabled", False):
+        print("[INFO] v10: computing cancel_rate_origin_last1d")
+        df = add_cancel_rate_origin_last1d(df, df_hist)
+    if (feat_cfg.get("divert_rate_last14d") or {}).get("enabled", False):
+        print("[INFO] v10: computing divert_rate_origin_last14d")
+        df = add_divert_rate_origin_last14d(df, df_hist)
 
     strike_cfg = bp.get("strike", {})
     if strike_cfg.get("enabled", False):
