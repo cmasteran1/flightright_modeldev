@@ -1,9 +1,0 @@
-{
-  "delay_rate_by_severity": {
-    "Clear": 0.2254,
-    "Drizzle": 0.3084,
-    "Overcast": 0.2304,
-    "Rain": 0.377,
-    "Snow": 0.3432
-  }
-}
