@@ -8,8 +8,8 @@
   "target": "arr",
   "output_enriched_unbalanced_path": "../flightrightdata/data/intermediate/UA_v10_unbalanced.parquet",
   "history_output_path": "../flightrightdata/data/intermediate/history_pool_dep_UA_v10.parquet",
-  "start_date": "2024-01-01",
-  "end_date": "2025-11-30",
+  "start_date": "2023-01-01",
+  "end_date": "2025-12-31",
   "dep_features_unbalanced_path": "../flightrightdata/data/processed/features_dep_UA_v10_unbalanced.parquet",
   "thresholds": [
     15,
@@ -51,8 +51,9 @@
       45,
       60
     ],
-    "pos_frac": 0.5,
+    "pos_frac": 0.4,
     "seed": 42,
-    "output_template": "../flightrightdata/data/processed/train_arr_ge{thr}_balanced_UA_v10.parquet"
+    "output_template": "../flightrightdata/data/processed/train_arr_ge{thr}_balanced_UA_v10.parquet",
+    "max_rows": 3000000
   }
 }

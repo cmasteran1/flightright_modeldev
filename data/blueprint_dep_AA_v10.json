@@ -8,11 +8,13 @@
   "_path_note": "Output paths use 'data/...' (resolved against DATA_ROOT = ../flightrightdata/). Input/meta paths use '../flightrightdata/data/...' (resolved against REPO_ROOT).",
   "target": "dep",
   "input_flights_path": [
+    "../flightrightdata/data/raw_bts/Year=2023/Month=*/flights.parquet",
     "../flightrightdata/data/raw_bts/Year=2024/Month=*/flights.parquet",
     "../flightrightdata/data/raw_bts/Year=2025/Month=*/flights.parquet"
   ],
   "history_flights_path": [
-    "../flightrightdata/data/raw_bts/Year=2023/Month=1[1-2]/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2022/Month=1[1-2]/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2023/Month=*/flights.parquet",
     "../flightrightdata/data/raw_bts/Year=2024/Month=*/flights.parquet",
     "../flightrightdata/data/raw_bts/Year=2025/Month=*/flights.parquet"
   ],
@@ -21,8 +23,8 @@
   "airlines": [
     "AA"
   ],
-  "start_date": "2024-01-01",
-  "end_date": "2025-11-30",
+  "start_date": "2023-01-01",
+  "end_date": "2025-12-31",
   "weather": {
     "daily": true,
     "hourly_at_dep": true,
@@ -100,7 +102,8 @@
       45,
       60
     ],
-    "delay_col": "DepDelayMinutes"
+    "delay_col": "DepDelayMinutes",
+    "pos_frac": 0.4
   },
   "feature_balance": {
     "enabled": true,
@@ -117,8 +120,9 @@
       45,
       60
     ],
-    "pos_frac": 0.5,
+    "pos_frac": 0.4,
     "seed": 42,
-    "output_template": "data/processed/train_dep_ge{thr}_balanced_AA_v10.parquet"
+    "output_template": "data/processed/train_dep_ge{thr}_balanced_AA_v10.parquet",
+    "max_rows": 3000000
   }
 }
