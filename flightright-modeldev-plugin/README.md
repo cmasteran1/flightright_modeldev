@@ -2,10 +2,11 @@
 
 A Cowork plugin for the data scientist building machine learning
 models that predict departure and arrival delay probabilities for
-flights. It bundles seven specialized skills that cover the full
-iteration loop — from literature research to feature sourcing, data
-quality, statistical validation, code implementation, hyperparameter
-optimization, and actually running training jobs.
+flights. It bundles eight specialized skills that cover the full
+iteration loop — from orchestration and literature research to
+feature sourcing, data quality, statistical validation, code
+implementation, hyperparameter optimization, and actually running
+training jobs.
 
 ## What it does
 
@@ -19,6 +20,7 @@ stage can pick up.
 
 | Skill | Purpose |
 |-------|---------|
+| `conductor` | Orchestrate the full model development lifecycle. Reads production constraints and skill reports, decides what to launch next, propagates findings backward (e.g., failed correlations trigger new research), and maintains a version manifest. Does not do research, statistics, code, or training itself. |
 | `research` | Investigate candidate features, modeling strategies, and papers. Produces structured markdown reports with sourced findings and recommended next actions. Does not run statistics on real data. |
 | `correlations-and-interactions` | Run statistical analyses (Spearman, mutual information, Cramér's V, quick GBDT deltas, interaction tests) on the real dataset to measure whether a candidate feature carries signal. Does not run full training cycles. |
 | `data-quality-analysis` | Verify that computed features are complete, accurate, and semantically faithful to their names. Writes reusable validation tests and hunts for new ones. |
@@ -29,19 +31,29 @@ stage can pick up.
 
 ## How the skills fit together
 
-A typical loop looks like this:
+The `conductor` skill orchestrates the other seven. A typical loop:
 
-1. `research` proposes a candidate feature backed by literature.
-2. `feature-transferability` confirms whether it can be served from
-   Aerodatabox or a trusted free source.
-3. `correlations-and-interactions` measures whether it carries
+1. `conductor` reads user constraints and launches Phase 1.
+2. `research` proposes candidate features backed by literature.
+3. `feature-transferability` confirms whether they can be served
+   from Aerodatabox or a trusted free source.
+4. `correlations-and-interactions` measures whether they carry
    signal against the real data.
-4. `model-implementation` wires it into `src/`, runs a smoke test,
-   and asks `data-quality-analysis` to sanity-check the values.
-5. `ml-hyperparameter-optimization` designs a sweep to retune the
-   model with the new feature in place.
-6. `model-runtime-manager` actually launches the sweep, monitors the
+5. `model-implementation` wires validated features into `src/`, runs
+   a smoke test, and asks `data-quality-analysis` to sanity-check.
+6. `ml-hyperparameter-optimization` designs a sweep to retune the
+   model with the new features in place.
+7. `model-runtime-manager` actually launches the sweep, monitors the
    runs, and reports results back.
+
+**Feedback loops:** The flow is not strictly forward. When a
+downstream skill rejects a candidate (e.g., correlations finds weak
+signal, transferability finds no source), the conductor propagates
+that finding backward and re-launches the upstream skill with refined
+context. For example, if correlations rejects a research candidate,
+the conductor re-launches research with the failure mode so it can
+propose an alternative that addresses the same underlying signal
+through a different mechanism.
 
 Each skill explicitly names which other skill to hand off to for
 follow-up work.

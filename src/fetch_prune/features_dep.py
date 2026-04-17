@@ -19,6 +19,14 @@ REPO_ROOT = Path.cwd()
 DATA_ROOT = (REPO_ROOT.parent / "flightrightdata").resolve()
 
 
+# v11: align "late aircraft" definition with Aerodatabox's 15-min industry convention.
+# BTS reports LateAircraftDelay as minutes attributed to a prior-leg delay. v10 used
+# "> 0 min" (any prior-leg tardiness); Aerodatabox, FAA, and IATA OTP all use a 15-min
+# threshold. v11 switches to ">= 15 min" for train/serve consistency. All *_lateaircraft_rate_*
+# features use this constant.
+LATE_AIRCRAFT_THRESHOLD_MIN = 15
+
+
 def _abspath(p: str, *, base: str = "repo") -> Path:
     pp = Path(p)
     if pp.is_absolute():
@@ -810,7 +818,7 @@ def add_tail_rolling_history(
     has_la = "LateAircraftDelay" in h.columns
     if has_la:
         h["LateAircraftDelay"] = pd.to_numeric(h["LateAircraftDelay"], errors="coerce").fillna(0.0)
-        h["_has_la"] = (h["LateAircraftDelay"] > 0).astype(float)
+        h["_has_la"] = (h["LateAircraftDelay"] >= LATE_AIRCRAFT_THRESHOLD_MIN).astype(float)
 
     if has_la:
         tail_daily = (
@@ -869,7 +877,7 @@ def add_dest_rolling_stats(
     has_la = "LateAircraftDelay" in h.columns
     if has_la:
         h["LateAircraftDelay"] = pd.to_numeric(h.get("LateAircraftDelay"), errors="coerce").fillna(0.0)
-        h["_has_la"] = (h["LateAircraftDelay"] > 0).astype(float)
+        h["_has_la"] = (h["LateAircraftDelay"] >= LATE_AIRCRAFT_THRESHOLD_MIN).astype(float)
 
     o = h.dropna(subset=["Origin", "FlightDate", "DepDelayMinutes"]).copy()
 
@@ -938,7 +946,7 @@ def add_wn_hub_spillover_from_history(
     has_late_aircraft = "LateAircraftDelay" in h.columns
     if has_late_aircraft:
         h["LateAircraftDelay"] = pd.to_numeric(h.get("LateAircraftDelay"), errors="coerce").fillna(0.0)
-        h["_has_lateaircraft"] = (h["LateAircraftDelay"] > 0).astype(float)
+        h["_has_lateaircraft"] = (h["LateAircraftDelay"] >= LATE_AIRCRAFT_THRESHOLD_MIN).astype(float)
 
     h_hub = h[h["Origin"].isin(hubs)].dropna(subset=["FlightDate"]).copy()
 
@@ -1202,6 +1210,152 @@ def add_divert_rate_origin_last14d(df: pd.DataFrame, hist: pd.DataFrame) -> pd.D
     return df
 
 
+# ------------------------------ v11 features ------------------------------
+
+def add_flightnum_od_otp_rate_last14d(df: pd.DataFrame, hist: pd.DataFrame) -> pd.DataFrame:
+    """v11: Fraction of on-time departures for the same (Carrier, FlightNum, Origin, Dest)
+    over the previous 14 days, where "on-time" means DepDelayMinutes <= 15 min
+    (BTS / Aerodatabox OTP convention). Cancelled flights are excluded from both the
+    numerator and denominator.
+
+    This captures a distributional signal orthogonal to the existing flightnum_od_depdelay_median_last14:
+    the median reflects magnitude; the OTP rate reflects frequency / variance. Partial
+    correlation controlling for the median grows with severity (+0.39 at y_dep_ge60,
+    +0.49 at y_dep_ge120 on the WN June-2025 slice). Logistic log-loss lift of
+    +1.5% to +2.2% at all v11 thresholds when added alongside the median.
+
+    Returns a new `flightnum_od_otp_rate_last14d` column in [0, 1]. ~7% of rows lack
+    this value (new flight-number-OD identities without 14d history); NaN is left as-is
+    for CatBoost's native missing-value handling.
+    """
+    h = hist.copy()
+    h["FlightDate"] = pd.to_datetime(h.get("FlightDate"), errors="coerce").dt.normalize()
+
+    # Normalize identity columns. BTS uses Reporting_Airline / Flight_Number_Reporting_Airline.
+    carrier_col = "Reporting_Airline" if "Reporting_Airline" in h.columns else "Operating_Airline"
+    flightnum_col = "Flight_Number_Reporting_Airline" if "Flight_Number_Reporting_Airline" in h.columns else "Flight_Number_Operating_Airline"
+
+    required = [carrier_col, flightnum_col, "Origin", "Dest", "FlightDate", "DepDelayMinutes"]
+    for c in required:
+        if c not in h.columns:
+            df = df.copy()
+            df["flightnum_od_otp_rate_last14d"] = np.nan
+            return df
+
+    h["Origin"] = h["Origin"].astype(str).str.upper().str.strip()
+    h["Dest"] = h["Dest"].astype(str).str.upper().str.strip()
+    h[carrier_col] = h[carrier_col].astype(str).str.upper().str.strip()
+    h["DepDelayMinutes"] = pd.to_numeric(h["DepDelayMinutes"], errors="coerce")
+
+    # Exclude cancelled flights from the denominator.
+    if "Cancelled" in h.columns:
+        canc = pd.to_numeric(h["Cancelled"], errors="coerce").fillna(0.0)
+        h = h[canc == 0].copy()
+
+    h = h.dropna(subset=required).copy()
+    h["_on_time"] = (h["DepDelayMinutes"] <= 15).astype(float)
+
+    # Daily per-identity on-time rate
+    daily = (
+        h.groupby([carrier_col, flightnum_col, "Origin", "Dest", "FlightDate"], as_index=False)
+        .agg(_daily_on_time=("_on_time", "mean"))
+        .sort_values([carrier_col, flightnum_col, "Origin", "Dest", "FlightDate"])
+    )
+
+    # 14-day rolling mean over daily rates, shifted 1 day forward
+    def _roll(g: pd.DataFrame) -> pd.DataFrame:
+        g = g.sort_values("FlightDate").copy()
+        g["flightnum_od_otp_rate_last14d"] = (
+            g["_daily_on_time"].shift(1).rolling(window=14, min_periods=1).mean()
+        )
+        return g
+
+    daily = (
+        daily.groupby([carrier_col, flightnum_col, "Origin", "Dest"], group_keys=False)
+        .apply(_roll)
+    )
+
+    # Rename identity columns to match the target df schema
+    daily = daily.rename(columns={carrier_col: "Reporting_Airline",
+                                   flightnum_col: "Flight_Number_Reporting_Airline"})
+
+    df = df.copy()
+    df["FlightDate"] = pd.to_datetime(df["FlightDate"], errors="coerce").dt.normalize()
+    df["Origin"] = df["Origin"].astype(str).str.upper().str.strip()
+    df["Dest"] = df["Dest"].astype(str).str.upper().str.strip()
+    df["Reporting_Airline"] = df["Reporting_Airline"].astype(str).str.upper().str.strip()
+
+    df = df.merge(
+        daily[["Reporting_Airline", "Flight_Number_Reporting_Airline",
+               "Origin", "Dest", "FlightDate", "flightnum_od_otp_rate_last14d"]],
+        on=["Reporting_Airline", "Flight_Number_Reporting_Airline",
+            "Origin", "Dest", "FlightDate"],
+        how="left",
+    )
+    return df
+
+
+def add_airline_cancel_rate_anomaly_7d(df: pd.DataFrame, hist: pd.DataFrame) -> pd.DataFrame:
+    """v11: Z-score of the carrier's rolling 7-day cancellation rate versus its 60-day baseline.
+
+        anomaly = (cancel_rate_7d - cancel_rate_60d) / std(cancel_rate_60d)
+
+    Picks up sudden cancellation spikes that signal operational crisis modes (crew
+    shortages, weather meltdowns) independent of pure delay magnitudes. Prior research
+    (`research/2026-04-13-correlations-novel-features.md` Task c) found Spearman rho
+    0.156 vs cancellation label and 0.084 vs y_dep_ge60 on full-year WN data. Signal
+    is essentially invisible on short (1-month) slices because the feature fires on
+    rare disruption events.
+
+    Per the v11 manifest, this feature is enabled in PRODUCTION training blueprints and
+    disabled in SMOKE blueprints (smoke month-long windows have insufficient variation).
+    """
+    h = hist.copy()
+    h["FlightDate"] = pd.to_datetime(h.get("FlightDate"), errors="coerce").dt.normalize()
+
+    carrier_col = "Reporting_Airline" if "Reporting_Airline" in h.columns else "Operating_Airline"
+    if carrier_col not in h.columns or "Cancelled" not in h.columns:
+        df = df.copy()
+        df["airline_cancel_rate_anomaly_7d"] = np.nan
+        return df
+
+    h[carrier_col] = h[carrier_col].astype(str).str.upper().str.strip()
+    h["Cancelled"] = pd.to_numeric(h["Cancelled"], errors="coerce").fillna(0.0)
+    h = h.dropna(subset=[carrier_col, "FlightDate"]).copy()
+
+    # Per-carrier daily cancel rate
+    daily = (
+        h.groupby([carrier_col, "FlightDate"], as_index=False)["Cancelled"]
+        .mean()
+        .rename(columns={"Cancelled": "_daily_cancel"})
+        .sort_values([carrier_col, "FlightDate"])
+    )
+
+    def _anom(g: pd.DataFrame) -> pd.DataFrame:
+        g = g.sort_values("FlightDate").copy()
+        # shift(1) to keep strictly-prior data
+        prior = g["_daily_cancel"].shift(1)
+        cr7 = prior.rolling(window=7, min_periods=1).mean()
+        cr60 = prior.rolling(window=60, min_periods=7).mean()
+        cr60_std = prior.rolling(window=60, min_periods=7).std()
+        g["airline_cancel_rate_anomaly_7d"] = (cr7 - cr60) / cr60_std.replace(0, np.nan)
+        return g
+
+    daily = daily.groupby(carrier_col, group_keys=False).apply(_anom)
+    daily = daily.rename(columns={carrier_col: "Reporting_Airline"})
+
+    df = df.copy()
+    df["FlightDate"] = pd.to_datetime(df["FlightDate"], errors="coerce").dt.normalize()
+    df["Reporting_Airline"] = df["Reporting_Airline"].astype(str).str.upper().str.strip()
+
+    df = df.merge(
+        daily[["Reporting_Airline", "FlightDate", "airline_cancel_rate_anomaly_7d"]],
+        on=["Reporting_Airline", "FlightDate"],
+        how="left",
+    )
+    return df
+
+
 WN_HUB_COORDS: Dict[str, Tuple[float, float, str]] = {
     "DEN": (39.8561, -104.6737, "America/Denver"),
     "PHX": (33.4373, -112.0078, "America/Phoenix"),
@@ -1423,7 +1577,7 @@ def add_delay_cause_rates_from_history(
         h[c] = pd.to_numeric(h.get(c), errors="coerce").fillna(0.0)
 
     h["_has_nas"]          = (h["NASDelay"] > 0).astype(float)
-    h["_has_lateaircraft"] = (h["LateAircraftDelay"] > 0).astype(float)
+    h["_has_lateaircraft"] = (h["LateAircraftDelay"] >= LATE_AIRCRAFT_THRESHOLD_MIN).astype(float)
     h["_has_weather"]      = (h["WeatherDelay"] > 0).astype(float)
 
     o = h.dropna(subset=["Origin", "FlightDate"]).copy()
@@ -2081,6 +2235,16 @@ def main():
     if (feat_cfg.get("divert_rate_last14d") or {}).get("enabled", False):
         print("[INFO] v10: computing divert_rate_origin_last14d")
         df = add_divert_rate_origin_last14d(df, hist)
+
+    # v11: flight-number-OD on-time performance rate and carrier cancellation anomaly.
+    # OTP rate is orthogonal to the delay median (partial rho grows with severity).
+    # Cancel anomaly needs >=60d history; disabled on smoke blueprints.
+    if (feat_cfg.get("otp_rate_last14d") or {}).get("enabled", False):
+        print("[INFO] v11: computing flightnum_od_otp_rate_last14d")
+        df = add_flightnum_od_otp_rate_last14d(df, hist)
+    if (feat_cfg.get("cancel_anomaly_7d") or {}).get("enabled", False):
+        print("[INFO] v11: computing airline_cancel_rate_anomaly_7d")
+        df = add_airline_cancel_rate_anomaly_7d(df, hist)
 
     strike_cfg = feat_cfg.get("strike") or {}
     if strike_cfg.get("enabled", False):

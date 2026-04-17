@@ -1,0 +1,81 @@
+{
+  "_comment": "v11: starts from v10. Changes: (1) late-aircraft threshold aligned with Aerodatabox at >=15 min (was >0 in v10) across all *_lateaircraft_rate_* features, (2) delay buckets [15,30,45,60] -> [15,30,60,120] to capture severe-delay risk, (3) origin_nasdelay_rate_last1d dropped (no Aerodatabox source without approximation), (4) flightnum_od_otp_rate_last14d added (BTS-offline, univariate AUC 0.685 at ge15, +1.5-2.2% log-loss lift). (5) airline_cancel_rate_anomaly_7d added in production configs (disabled on smoke because 60-day baseline requires longer history). See exploration/v11_feature_spec.md.",
+  "_workflow": {
+    "run": "python src/fetch_prune/prepare_cancel_dataset.py data/blueprint_cancel_v11.json"
+  },
+  "input_flights_path": "data/raw_bts/",
+  "history_flights_path": "data/raw_bts/",
+  "airlines": [
+    "WN",
+    "DL",
+    "AA",
+    "UA"
+  ],
+  "start_date": "2022-01-01",
+  "end_date": "2025-11-30",
+  "weather": {
+    "daily": {
+      "enabled": true,
+      "cache_dir": "data/weather_cache/daily"
+    },
+    "hourly_at_departure": {
+      "enabled": true,
+      "cache_dir": "data/weather_cache/hourly"
+    }
+  },
+  "strike": {
+    "enabled": true,
+    "cache_path": "data/strike_cache.json"
+  },
+  "features_dep": {
+    "tail_and_flightnum_time": false,
+    "tail_history": {
+      "enabled": false
+    },
+    "hub_spillover": {
+      "enabled": true,
+      "hubs": [
+        "ATL",
+        "DEN",
+        "DFW",
+        "ORD",
+        "EWR"
+      ]
+    },
+    "flightnum_od": {
+      "n_recent": 20,
+      "lookback_days": 14
+    },
+    "delay_median_last1": {
+      "enabled": true
+    },
+    "nas_rate_last1d": {
+      "enabled": false
+    },
+    "cancel_rate_last1d": {
+      "enabled": true
+    },
+    "divert_rate_last14d": {
+      "enabled": true
+    },
+    "otp_rate_last14d": {
+      "enabled": true
+    },
+    "cancel_anomaly_7d": {
+      "enabled": true
+    }
+  },
+  "output_features_unbalanced_path": "data/processed/features_cancel_all_v11_unbalanced.parquet",
+  "feature_balance": {
+    "eval": {
+      "enabled": true,
+      "eval_frac": 0.15,
+      "output_path": "data/processed/features_cancel_all_v11_eval_unbalanced.parquet"
+    }
+  },
+  "balance": {
+    "pos_frac": 0.2,
+    "seed": 42,
+    "output_path": "data/processed/train_cancel_balanced_v11.parquet"
+  }
+}

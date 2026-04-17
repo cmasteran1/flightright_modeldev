@@ -239,26 +239,27 @@ for _w in [1, 7, 14]:
         _reg_num(f"origin_depdelay_std_last{_w}", 0, _MULTIDAY_MEAN_CAP[_w], f"origin dep delay std {_w}d")
 
 # --- Delay cause rates (origin + carrier) ---
+# v11: late-aircraft rates use a >=15min threshold (aligned with Aerodatabox/industry OTP).
 for _w in [1, 7, 14]:
-    _reg_num(f"origin_lateaircraft_rate_last{_w}", 0, 1, f"origin late-aircraft rate {_w}d")
+    _reg_num(f"origin_lateaircraft_rate_last{_w}", 0, 1, f"origin late-aircraft rate (>=15min) {_w}d")
     _reg_num(f"origin_nas_rate_last{_w}", 0, 1, f"origin NAS delay rate {_w}d")
     _reg_num(f"origin_weather_rate_last{_w}", 0, 1, f"origin weather delay rate {_w}d")
-    _reg_num(f"carrier_lateaircraft_rate_last{_w}", 0, 1, f"carrier late-aircraft rate {_w}d")
+    _reg_num(f"carrier_lateaircraft_rate_last{_w}", 0, 1, f"carrier late-aircraft rate (>=15min) {_w}d")
 
 # --- Hub spillover (indexed 0-4 and named DEN/PHX/BWI/MDW/BNA) ---
 for _h in [0, 1, 2, 3, 4]:
     for _w in [1, 7, 14]:
         _reg_num(f"hub_{_h}_depdelay_mean_last{_w}", -30, _MULTIDAY_MEAN_CAP[_w], f"hub {_h} dep delay mean {_w}d")
-        _reg_num(f"hub_{_h}_lateaircraft_rate_last{_w}", 0, 1, f"hub {_h} late-aircraft rate {_w}d")
+        _reg_num(f"hub_{_h}_lateaircraft_rate_last{_w}", 0, 1, f"hub {_h} late-aircraft rate (>=15min) {_w}d")
 for _hub in ["DEN", "PHX", "BWI", "MDW", "BNA"]:
     for _w in [1, 7, 14]:
         _reg_num(f"hub_{_hub}_depdelay_mean_last{_w}", -30, _MULTIDAY_MEAN_CAP[_w], f"hub {_hub} dep delay mean {_w}d")
-        _reg_num(f"hub_{_hub}_lateaircraft_rate_last{_w}", 0, 1, f"hub {_hub} late-aircraft rate {_w}d")
+        _reg_num(f"hub_{_hub}_lateaircraft_rate_last{_w}", 0, 1, f"hub {_hub} late-aircraft rate (>=15min) {_w}d")
 
 # --- Destination rolling stats ---
 for _w in [1, 7, 14]:
     _reg_num(f"dest_depdelay_mean_last{_w}", -30, _MULTIDAY_MEAN_CAP[_w], f"dest dep delay mean {_w}d")
-    _reg_num(f"dest_lateaircraft_rate_last{_w}", 0, 1, f"dest late-aircraft rate {_w}d")
+    _reg_num(f"dest_lateaircraft_rate_last{_w}", 0, 1, f"dest late-aircraft rate (>=15min) {_w}d")
 
 # --- Congestion ---
 _reg_num("origin_congestion_3h_total", 0, 1000, "origin 3h congestion count")
@@ -309,7 +310,7 @@ _reg_num("dest_airline_arrivals_pm60_eta", 0, 800, "dest airline arrivals +-60mi
 
 # --- v8 analyst-recommended features ---
 _reg_num("is_peak_hour", 0, 1, "departure hour 16-20 flag")
-_reg_num("hub_max_lateaircraft_last1", 0, 1, "max hub late-aircraft rate (last 1d)")
+_reg_num("hub_max_lateaircraft_last1", 0, 1, "max hub late-aircraft rate (>=15min, last 1d)")
 _reg_num("wind_x_precip", 0, 200000, "windspeed * precipitation interaction")
 
 # --- Strike / labor-action features (v8) ---
@@ -329,10 +330,19 @@ for _h in [0, 1, 2, 3, 4]:
     _reg_num(f"hub_{_h}_depdelay_median_last1", -30, _MULTIDAY_MEDIAN_CAP[1], f"hub {_h} dep delay median 1d (v10)")
 
 # --- v10: AeroDataBox-compatible BTS aggregates ---
-# Three new airport-level rate features. All are bounded fractions in [0, 1].
-_reg_num("origin_nasdelay_rate_last1d", 0, 1, "origin NAS delay rate 1d (v10)")
+# Airport-level rate features. Bounded fractions in [0, 1].
+# NOTE: origin_nasdelay_rate_last1d is dropped from v11 configs (no Aerodatabox parity
+# without approximation), but the registration stays because the feature function still
+# exists for offline research use.
+_reg_num("origin_nasdelay_rate_last1d", 0, 1, "origin NAS delay rate 1d (v10; dropped in v11 configs)")
 _reg_num("cancel_rate_origin_last1d", 0, 1, "origin cancel rate 1d (v10)")
 _reg_num("divert_rate_origin_last14d", 0, 1, "origin divert rate 14d (v10)")
+
+# --- v11: new BTS-offline features ---
+# OTP rate is [0, 1]. Cancel anomaly is a z-score; typical range [-3, +3] but allow
+# wider bounds for extreme disruption events (e.g., winter-storm meltdowns).
+_reg_num("flightnum_od_otp_rate_last14d", 0, 1, "flight-number OD on-time rate 14d (v11)")
+_reg_num("airline_cancel_rate_anomaly_7d", -10, 10, "airline cancel rate 7d anomaly z-score (v11)")
 
 # --- v10: arrival elapsed-time-ratio (gate-based, AeroDataBox-safe) ---
 # Realistic flights run 0.7x-1.5x the scheduled block time; allow a wider window for

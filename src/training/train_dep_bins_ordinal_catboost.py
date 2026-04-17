@@ -384,8 +384,10 @@ def main():
         "max_rows": None,
         "prediction_samples_n": 500,
 
-        # Weights for deployable outputs (optional)
-        "bin_weights_minutes": [7.5, 22.5, 45.0, 90.0, 150.0],
+        # Weights for deployable outputs (optional).
+        # v11 midpoints correspond to buckets [<15, 15-30, 30-60, 60-120, >=120].
+        # v10 used [7.5, 22.5, 45.0, 90.0, 150.0] for buckets [<15, 15-30, 30-45, 45-60, >=60].
+        "bin_weights_minutes": [7.5, 22.5, 45.0, 90.0, 180.0],
         "severity_weights": [0.0, 1.0, 2.0, 3.0, 4.0],
 
         # Pattern B: save a PLAIN-DICT joblib (no custom classes)

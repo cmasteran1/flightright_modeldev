@@ -1,0 +1,124 @@
+{
+  "_comment": "v11: starts from v10. Changes: (1) late-aircraft threshold aligned with Aerodatabox at >=15 min (was >0 in v10) across all *_lateaircraft_rate_* features, (2) delay buckets [15,30,45,60] -> [15,30,60,120] to capture severe-delay risk, (3) origin_nasdelay_rate_last1d dropped (no Aerodatabox source without approximation), (4) flightnum_od_otp_rate_last14d added (BTS-offline, univariate AUC 0.685 at ge15, +1.5-2.2% log-loss lift). (5) airline_cancel_rate_anomaly_7d added in production configs (disabled on smoke because 60-day baseline requires longer history). See exploration/v11_feature_spec.md.",
+  "_workflow": {
+    "step_1": "python src/fetch_prune/prepare_dataset.py data/blueprint_dep_WN_v11_smoke.json",
+    "step_2": "python src/fetch_prune/features_dep.py    data/blueprint_dep_WN_v11_smoke.json"
+  },
+  "target": "dep",
+  "input_flights_path": [
+    "../flightrightdata/data/raw_bts/Year=2025/Month=06/flights.parquet"
+  ],
+  "history_flights_path": [
+    "../flightrightdata/data/raw_bts/Year=2025/Month=05/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2025/Month=06/flights.parquet"
+  ],
+  "airports_csv": "../flightrightdata/data/meta/airports.csv",
+  "airports_filter_csv": "../flightrightdata/data/meta/airport_rankings/WN_top_20.csv",
+  "airlines": [
+    "WN"
+  ],
+  "start_date": "2025-06-01",
+  "end_date": "2025-06-29",
+  "weather": {
+    "daily": true,
+    "hourly_at_dep": true,
+    "dest_daily": false,
+    "dest_hourly_at_arr": false,
+    "cache_dir": "../flightrightdata/weather_cache",
+    "hourly_cache_dir": "../flightrightdata/weather_cache_hourly",
+    "historical_cache_dir": "../flightrightdata/weather_cache_historical"
+  },
+  "strike": {
+    "enabled": false
+  },
+  "add_aircraft_type": false,
+  "add_aircraft_age": false,
+  "history_lookback_days": 20,
+  "output_enriched_unbalanced_path": "data/intermediate/WN_v11_smoke_unbalanced.parquet",
+  "history_output_path": "data/intermediate/history_pool_dep_WN_v11_smoke.parquet",
+  "features_dep": {
+    "holiday_windows": {
+      "thanksgiving": 2,
+      "christmas": 3
+    },
+    "n_recent_flightnum_od": 30,
+    "low_support_leq": 2,
+    "rolling_windows_days": [
+      1,
+      7,
+      14
+    ],
+    "hub_spillover": {
+      "airline": "WN",
+      "hubs": [
+        "DEN",
+        "PHX",
+        "BWI",
+        "MDW",
+        "BNA"
+      ]
+    },
+    "hub_weather": {
+      "enabled": false
+    },
+    "tail_history": {
+      "enabled": false
+    },
+    "dest_rolling": {
+      "enabled": true
+    },
+    "prior_leg": {
+      "enabled": false
+    },
+    "strike": {
+      "enabled": false
+    },
+    "delay_median_last1": {
+      "enabled": true
+    },
+    "nas_rate_last1d": {
+      "enabled": false
+    },
+    "cancel_rate_last1d": {
+      "enabled": true
+    },
+    "divert_rate_last14d": {
+      "enabled": true
+    },
+    "otp_rate_last14d": {
+      "enabled": true
+    },
+    "cancel_anomaly_7d": {
+      "enabled": false
+    }
+  },
+  "output_features_unbalanced_path": "data/processed/features_dep_WN_v11_smoke_unbalanced.parquet",
+  "balance": {
+    "thresholds": [
+      15,
+      30,
+      60,
+      120
+    ],
+    "delay_col": "DepDelayMinutes"
+  },
+  "feature_balance": {
+    "enabled": true,
+    "eval": {
+      "enabled": true,
+      "by": "random",
+      "eval_frac": 0.15,
+      "seed": 42,
+      "output_path": "data/processed/features_dep_WN_v11_smoke_eval_unbalanced.parquet"
+    },
+    "thresholds": [
+      15,
+      30,
+      60,
+      120
+    ],
+    "pos_frac": 0.5,
+    "seed": 42,
+    "output_template": "data/processed/train_dep_ge{thr}_balanced_WN_v11_smoke.parquet"
+  }
+}

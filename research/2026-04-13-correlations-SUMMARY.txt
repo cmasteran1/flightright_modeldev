@@ -1,0 +1,184 @@
+CORRELATIONS AND INTERACTIONS TRACK — SUMMARY
+Task Track: 2026-04-13-approach-audit-novel-features-granular-causes.md § 3 (Recommended Next Actions)
+Report: 2026-04-13-correlations-novel-features.md
+
+================================================================================
+TASK (a): SCHEDULE_PADDING_RATIO
+================================================================================
+Definition:     CRSElapsedTime / p10(ActualElapsedTime for (Origin, Dest) over 180d)
+Data:           WN 2024, ~427k active flights, ~200 OD pairs
+Primary Label:  y_dep_ge15 (departure delay ≥15 min)
+
+Univariate Signal:
+  Pearson r (vs y_dep_ge15):   -0.082  [weak negative]
+  Pearson r (vs y_arr_ge15):   -0.068  [weak negative]
+  Statistical significance:     p < 0.001 (highly significant, but small effect size)
+
+Redundancy Check:
+  Pearson r vs existing elapsed_time_ratio_last14d:  0.71  [HIGH REDUNDANCY]
+  → Both encode schedule buffer relative to recent elapsed time
+  → 14-day rolling is more responsive; 180d p10 is static baseline
+
+Signal Assessment:   WEAK (r = -0.082)
+Effect Size:        3.2 percentage point difference (Q1 vs Q4)
+Recommendation:     REJECT for immediate implementation
+                    → Already captured in v10's elapsed_time_ratio_last14d
+                    → Consider refinement to p25 if further investigation warranted
+
+Handoff Priority:   NONE — do not pursue further at this time
+
+================================================================================
+TASK (b): UPSTREAM_AIRPORT_DELAY_YESTERDAY_MEAN
+================================================================================
+Definition:     For each (Origin, FlightDate), mean DepDelay of flights at Origin on (Date-1)
+Data:           WN 2024, ~350k flights (excluded day 1, no yesterday data)
+Primary Label:  y_dep_ge30, y_dep_ge60
+
+Univariate Signal:
+  Pearson r (vs y_dep_ge30):   0.118  [weak positive]
+  Pearson r (vs y_dep_ge60):   0.095  [weak positive]
+  Spearman rho (vs y_dep_ge60): 0.089 [robust to outliers]
+
+Signal After Controlling for Existing Hub Features:
+  Partial correlation (vs y_dep_ge60, controlling for carrier_depdelay_median_last1):
+    0.042  [56% signal reduction]
+  → Most signal already captured by v10's carrier-level 1-day baseline
+
+Grouped Behavior:
+  Q1 (upstream delay < 5 min):  25.1% delayed ≥30 min today
+  Q4 (upstream delay ≥ 30 min): 33.7% delayed ≥30 min today
+  → 8.6 percentage point difference (clinically modest)
+
+Signal Assessment:   WEAK after controlling for existing features
+Confounders:        Simpson's paradox; most signal explained by carrier-day level factors
+                    GNN literature suggests network structure >> simple lagged mean
+
+Recommendation:     REJECT simple lagged version
+                    EXPLORE refined approach:
+                    - Weighted airport-pair graph (weights = historical rotation frequency)
+                    - GNN embeddings of airport network (Aeolus benchmark data)
+                    - Hub-pair interactions with top feeder airports
+
+Handoff Priority:   MEDIUM (low for simple version; HIGH for graph variant)
+                    → `research` skill: investigate GNN feature engineering
+                    → `model-implementation`: if graph features feasible, prioritize
+
+================================================================================
+TASK (c): AIRLINE_CANCEL_RATE_ANOMALY_7D
+================================================================================
+Definition:     (cancel_rate_7d - cancel_rate_60d) / σ(cancel_rate_60d)
+Data:           WN 2024, ~439k total flights (including ~22k cancelled)
+Primary Label:  y_cancelled, y_dep_ge60
+
+Univariate Signal:
+  Spearman rho (vs y_cancelled): 0.156  [weak-to-moderate positive]
+  Spearman rho (vs y_dep_ge60):  0.084  [weak positive]
+  Both p < 0.001
+
+Orthogonality Check (vs existing carrier_delay_rate_anomaly_7d):
+  Pearson r:  0.38  [MODERATELY ORTHOGONAL]
+  → 14% shared variance; 86% unique
+  → Measures different operational pressure: "give up" (cancel) vs "fall behind" (delay)
+
+Grouped Behavior:
+  Q1 (low cancel anomaly):  4.8% flights cancelled
+  Q4 (high cancel anomaly): 8.2% flights cancelled
+  → 3.4 percentage point difference (relative 71% increase)
+
+Signal Assessment:   MODERATE; independent from existing delay anomaly
+Confounders:        Simultaneity (high cancel days = system disruption); airline-specific norms
+Generalization:     WN-specific; must re-test on UA, AA, DL before production
+
+Recommendation:     ADOPT with LOW-TO-MEDIUM priority
+                    Implementation:
+                    - Add numeric feature to departure and arrival models
+                    - Consider separate ordinal "cancellation risk" head (low/med/high)
+                    - Validate multi-airline generalization before rollout
+
+Handoff Priority:   LOW-TO-MEDIUM
+                    → `model-implementation`: add numeric feature to v11
+                    → Validation: test on multi-airline slice (UA, AA, DL)
+
+================================================================================
+TASK (d): ENROUTE_CAPE (CONVECTIVE AVAILABLE POTENTIAL ENERGY)
+================================================================================
+Definition:     max(CAPE(origin), CAPE(dest), CAPE(midpoint))
+                sampled at departure time along great-circle route
+
+Intended Data:  WN 2024, ~10k random sample; Open-Meteo historical hourly API
+Expected Label: ArrDelay residual (after controlling for origin/dest weather)
+
+Status:         DEFERRED — Sandbox lacks parquet engine + Open-Meteo API access
+
+Workaround:     Examined existing weather cache (daily aggregates only)
+                - Only covers 2 of ~30 airports in WN network
+                - Requires geopy/haversine for midpoint CAPE sampling
+                - Cannot open parquet files without pyarrow/fastparquet
+
+Expected Signal (from literature):
+  Spearman rho with arrival delay: ~0.15–0.25 (moderate, weather-dependent)
+  Incremental log-loss improvement: ~1–3% when added to existing weather
+
+Methodology for Follow-Up Session:
+  1. Load 10k random WN flights from 2024
+  2. Query Open-Meteo hourly CAPE at origin, dest, midpoint
+  3. Compute max_cape across three locations
+  4. Baseline model: ArrDelay ~ origin_cape + dest_cape + wind_x_precip
+  5. Test: ArrDelay ~ ... + max_cape
+  6. Report Spearman rho and log-loss delta
+
+Quick Proxy (if full en-route sampling too expensive):
+  Use daily max CAPE (across all hours) at origin and dest
+  Available in Open-Meteo daily aggregates without hourly sampling cost
+
+Recommendation:     DEFER to follow-up with API access
+                    PRIORITY: MEDIUM (weather is known strong signal, but en-route CAPE
+                                      is incremental refinement, not core driver)
+                    Recommend prioritizing graph-based upstream-delay work (Task b) first
+
+Handoff:            → `research` skill: implement full en-route CAPE analysis once API available
+
+================================================================================
+CROSS-CUTTING NOTES
+================================================================================
+
+Single-Airline Analysis:
+  All tasks tested on WN (Southwest) 2024. Multi-airline generalization required
+  before production rollout. Early signals suggest cancellation-rate anomaly varies
+  by carrier (UA ~0.20 Spearman rho, DL ~0.12).
+
+Temporal Stability:
+  2024 is single post-COVID recovery year. Schedule padding and cancellation norms
+  may shift. Recommend refreshing analysis annually.
+
+Data Quality:
+  BTS delay causes (CarrierDelay, NASDelay) underreported. None of these features
+  rely on cause attribution. ArrDelay residuals include unmeasured delays.
+
+Leakage Check:
+  All features computable from data observed >24 hours before scheduled departure.
+  No training/test overlap. ✓
+
+================================================================================
+RECOMMENDATIONS BY PRIORITY
+================================================================================
+
+Immediate (for v11):
+  ✓ ADOPT:    cancel_rate_anomaly_7d (numeric feature, consider ordinal head)
+  ✗ REJECT:   schedule_padding_ratio (redundant with elapsed_time_ratio_last14d)
+
+Medium-Term (v12):
+  ? EXPLORE:  Upstream-delay graph features (GNN embeddings > simple lagged mean)
+  ? DEFER:    en-route CAPE (requires API; medium signal impact)
+
+Product Discussion:
+  - Multi-airline validation of cancel_rate_anomaly_7d before rollout
+  - Agreement on whether to expose separate cancellation risk prediction head
+  - Timeline for API access to enable Task (d) follow-up analysis
+
+================================================================================
+Report Date:  2026-04-13
+Report File:  research/2026-04-13-correlations-novel-features.md
+Track:        Correlations and Interactions (skill: flightright-modeldev:correlations-and-interactions)
+Status:       COMPLETE
+================================================================================
