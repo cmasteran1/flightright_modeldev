@@ -1,12 +1,21 @@
 """
 Generate v11 config files from v10 templates.
 
+WARNING: this generator is intended as a ONE-TIME SCAFFOLDING tool at v11
+inception. It rewrites v11 configs from their v10 sources unconditionally,
+which WILL CLOBBER any subsequent hand-edits (e.g. the extended date range
+applied by scripts/smoke/extend_v11_date_range.py). If you re-run this to
+pick up a bug fix (like the features.numeric nested-path fix added
+2026-04-17), immediately re-run extend_v11_date_range.py afterwards to
+restore the extended production date window.
+
 Changes applied to every v10 config:
   - Replace "v10" with "v11" in filenames and all internal path references.
   - Bump delay thresholds [15,30,45,60] -> [15,30,60,120] where present.
   - Update per_threshold_train_paths keys accordingly.
   - Turn off NAS delay feature flag (nas_rate_last1d.enabled = false).
-  - Drop origin_nasdelay_rate_last1d from numeric_features.
+  - Drop origin_nasdelay_rate_last1d from BOTH top-level numeric_features
+    (dep/cancel/smoke/HPO) AND nested features.numeric (arr configs).
   - Add flightnum_od_otp_rate_last14d + airline_cancel_rate_anomaly_7d to
     numeric_features and to blueprint feature flags per production/smoke policy.
   - Update deploy_bundle_joblib_name.
@@ -99,19 +108,59 @@ def update_per_threshold_paths(cfg: dict) -> dict:
     return cfg
 
 
+def _apply_v11_feature_policy(feature_list: list, smoke: bool) -> list:
+    """Drop v11-dropped features, add v11 new features per smoke/prod policy.
+
+    Pure function — returns a new list, caller writes it back. Used by both the
+    top-level `numeric_features` path (dep/cancel/smoke/HPO configs) and the
+    nested `features.numeric` path (arr configs).
+    """
+    out = [f for f in feature_list if f != "origin_nasdelay_rate_last1d"]
+    if "flightnum_od_otp_rate_last14d" not in out:
+        out.append("flightnum_od_otp_rate_last14d")
+    if not smoke and "airline_cancel_rate_anomaly_7d" not in out:
+        out.append("airline_cancel_rate_anomaly_7d")
+    return out
+
+
 def update_numeric_features(cfg: dict, smoke: bool) -> dict:
-    """Drop NAS feature, add OTP (+ cancel anomaly if not smoke) to numeric_features."""
-    nf = cfg.get("numeric_features")
-    if not isinstance(nf, list):
+    """Apply the v11 feature policy to every numeric feature list in cfg.
+
+    Visits two distinct paths:
+      - cfg["numeric_features"]      (dep / cancel / smoke / HPO configs)
+      - cfg["features"]["numeric"]   (arr configs — trainer reads features.numeric)
+
+    Prior to this fix the nested path was never visited, which left NAS
+    references in the 4 arr v11 training configs. See the 2026-04-17 v11
+    transferability audit for the defect report.
+    """
+    # Top-level list
+    top = cfg.get("numeric_features")
+    if isinstance(top, list):
+        cfg["numeric_features"] = _apply_v11_feature_policy(top, smoke)
+
+    # Nested list (arrival configs)
+    features_block = cfg.get("features")
+    if isinstance(features_block, dict):
+        nested = features_block.get("numeric")
+        if isinstance(nested, list):
+            features_block["numeric"] = _apply_v11_feature_policy(nested, smoke)
+            cfg["features"] = features_block
+
+    return cfg
+
+
+def update_eval_frac(cfg: dict) -> dict:
+    """v11 uses an 85% eval / 15% train_pool split: massive eval keeps AUC stable
+    at the sparse y_dep_ge120 bucket. Train-pool is still further balanced to
+    40% positive rate per-threshold, so absolute training volume is meaningful.
+    """
+    fb = cfg.get("feature_balance")
+    if not isinstance(fb, dict):
         return cfg
-    # Drop origin_nasdelay_rate_last1d
-    nf = [f for f in nf if f != "origin_nasdelay_rate_last1d"]
-    # Add OTP rate and (conditionally) cancel anomaly
-    if "flightnum_od_otp_rate_last14d" not in nf:
-        nf.append("flightnum_od_otp_rate_last14d")
-    if not smoke and "airline_cancel_rate_anomaly_7d" not in nf:
-        nf.append("airline_cancel_rate_anomaly_7d")
-    cfg["numeric_features"] = nf
+    ev = fb.get("eval")
+    if isinstance(ev, dict):
+        ev["eval_frac"] = 0.85
     return cfg
 
 
@@ -170,6 +219,7 @@ def main() -> None:
         cfg = update_per_threshold_paths(cfg)
         cfg = update_numeric_features(cfg, smoke)
         cfg = update_feature_flags(cfg, smoke)
+        cfg = update_eval_frac(cfg)
         cfg = update_comment(cfg, v11_name)
 
         # Update deploy_bundle_joblib_name if present
