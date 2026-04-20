@@ -821,6 +821,41 @@ def main():
     joblib.dump(bundle, deploy_path)
     log(f"[SAVE] deployable bundle -> {deploy_path}")
 
+    # --- Consolidated training-metrics JSON ------------------------------------
+    # Mirrors the arr trainer's `arr_train_metrics_*.json` so downstream analysis
+    # code can read a single file per model instead of walking per-threshold dirs.
+    # Kept alongside the existing per-threshold meta.json files (not a replacement).
+    _train_metrics_name = (
+        cfg.get("metrics_output_json_name")
+        or f"dep_train_metrics_{Path(deploy_name).stem.replace('dep_delay_bins_bundle_','')}.json"
+    )
+    _train_metrics_path = OUTDIR / _train_metrics_name
+    _train_metrics = {
+        "artifact_type": "dep_train_metrics_v1",
+        "created_utc": datetime.now(dt_timezone.utc).isoformat(),
+        "thresholds": THRESHOLDS,
+        "n_eval": int(len(df_eval_unbal)),
+        "multibin_log_loss": float(ll) if not np.isnan(ll) else float("nan"),
+        "multibin_accuracy": float(acc),
+        "per_threshold": {
+            str(t): {
+                "auc_cal_unbal":        registry[t]["meta"].get("auc_cal_unbalanced"),
+                "auc_test_bal_sanity":  registry[t]["meta"].get("auc_test_balanced_sanity"),
+                "auc_eval_unbal":       registry[t]["meta"].get("auc_eval_unbalanced"),
+                "youden_threshold":     registry[t]["meta"].get("threshold_youden"),
+                "youden_tpr":           registry[t]["meta"].get("tpr_at_threshold"),
+                "youden_fpr":           registry[t]["meta"].get("fpr_at_threshold"),
+                "unbalanced_cal_rows":  registry[t]["meta"].get("unbalanced_cal_rows"),
+                "unbalanced_eval_rows": registry[t]["meta"].get("unbalanced_eval_rows"),
+            }
+            for t in THRESHOLDS
+        },
+        "versions": _safe_versions(),
+    }
+    with open(_train_metrics_path, "w", encoding="utf-8") as _fh:
+        json.dump(_train_metrics, _fh, indent=2)
+    log(f"[SAVE] consolidated train metrics -> {_train_metrics_path}")
+
     # --- MLflow final metrics + artifacts --------------------------------------
     mlflow.log_metrics({
         "multibin_log_loss": float(ll) if not np.isnan(ll) else 0.0,
