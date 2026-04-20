@@ -211,6 +211,96 @@ def add_weather_kelvin(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# ---------- ISD (IEM ASOS METAR) visibility integration ----------
+# Training-time replacement for the Open-Meteo visibility feature, which has
+# univariate AUC ~0.50 across all four airlines (effectively random) because
+# Open-Meteo visibility is interpolated from a ~10 km-grid NWP model that
+# smooths over airport-scale fog / low-vis events.
+#
+# IEM ASOS provides 1/4-statute-mile-precision at-airport METAR observations
+# derived from airport sensors, cached locally by collect_isd_visibility.py.
+#
+# SERVE-TIME CAVEAT: This feature is training-time only until the
+# feature-transferability skill identifies a serve-time path (Aerodatabox,
+# aviationweather.gov METAR, or TAF). Do not deploy a model using
+# origin_dep_visibility_isd_m until that audit is complete.
+
+def _load_isd_visibility_cache(cache_dir: Path, iatas: list[str]) -> dict[str, pd.DataFrame]:
+    """Load all ISD visibility parquets for `iatas` from `cache_dir`.
+
+    Returns {iata: DataFrame(valid_utc, visibility_m, dep_utc_hour)}.
+    Missing airports map to an empty DataFrame; callers must handle NaN merges.
+    Files may have date stamps in their names — we glob by prefix."""
+    cache_dir = Path(cache_dir)
+    out: dict[str, pd.DataFrame] = {}
+    if not cache_dir.exists():
+        print(f"[ISD] cache dir {cache_dir} does not exist; all visibility will be NaN")
+        return {i: pd.DataFrame(columns=["dep_utc_hour", "visibility_m"]) for i in iatas}
+    for iata in iatas:
+        # Prefer the longest-span file if multiple.
+        files = sorted(cache_dir.glob(f"{iata}_*_UTC_hourly_vis.parquet"))
+        if not files:
+            out[iata] = pd.DataFrame(columns=["dep_utc_hour", "visibility_m"])
+            continue
+        dfs = [pd.read_parquet(f, columns=["valid_utc", "visibility_m"]) for f in files]
+        v = pd.concat(dfs, ignore_index=True)
+        if v.empty:
+            out[iata] = pd.DataFrame(columns=["dep_utc_hour", "visibility_m"])
+            continue
+        v["valid_utc"] = pd.to_datetime(v["valid_utc"], utc=True, errors="coerce")
+        v = v.dropna(subset=["valid_utc"])
+        v["dep_utc_hour"] = v["valid_utc"].dt.floor("h")
+        # If multiple obs share an hour (SPECI + regular METAR), keep the earliest
+        # to reflect what a pre-planning pilot would have seen. Dedupe within airport.
+        v = v.sort_values("valid_utc").drop_duplicates("dep_utc_hour", keep="first")
+        out[iata] = v[["dep_utc_hour", "visibility_m"]].reset_index(drop=True)
+    return out
+
+
+def add_isd_visibility(df: pd.DataFrame, cache_dir: Path) -> pd.DataFrame:
+    """Add `origin_dep_visibility_isd_m` by joining the ISD cache on
+    (Origin IATA, hour-floor of scheduled departure in UTC).
+
+    Non-destructive: the original `origin_dep_visibility_m` (Open-Meteo) stays
+    in the frame so A/B comparisons are possible. The blueprint/training-config
+    feature lists control which one the model actually sees.
+    """
+    df = df.copy()
+    if "Origin" not in df.columns or "dep_dt_local" not in df.columns:
+        print("[ISD] missing Origin or dep_dt_local; skipping ISD visibility join")
+        df["origin_dep_visibility_isd_m"] = pd.NA
+        return df
+
+    dep_utc = pd.to_datetime(df["dep_dt_local"], errors="coerce", utc=True)
+    df["_dep_utc_hour"] = dep_utc.dt.floor("h")
+
+    iatas = sorted(df["Origin"].dropna().astype(str).str.upper().unique().tolist())
+    cache = _load_isd_visibility_cache(cache_dir, iatas)
+
+    # Build a long-form lookup table once and merge — O(n log n) via groupby+merge
+    rows = []
+    for iata, v in cache.items():
+        if v.empty:
+            continue
+        vv = v.copy()
+        vv["Origin"] = iata
+        rows.append(vv[["Origin", "dep_utc_hour", "visibility_m"]])
+    if rows:
+        lookup = pd.concat(rows, ignore_index=True)
+        df = df.merge(
+            lookup.rename(columns={"visibility_m": "origin_dep_visibility_isd_m",
+                                    "dep_utc_hour": "_dep_utc_hour"}),
+            on=["Origin", "_dep_utc_hour"], how="left",
+        )
+    else:
+        df["origin_dep_visibility_isd_m"] = pd.NA
+
+    df = df.drop(columns=["_dep_utc_hour"])
+    missing = df["origin_dep_visibility_isd_m"].isna().mean()
+    print(f"[ISD] origin_dep_visibility_isd_m: {(1 - missing) * 100:.1f}% populated ({missing * 100:.1f}% NaN)")
+    return df
+
+
 # ---------- helper: ensure we have a usable scheduled-departure datetime ----------
 def _ensure_dep_dt(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -2174,6 +2264,15 @@ def main():
         df["origin_dep_hour_weathercode"] = pd.to_numeric(df["origin_dep_weathercode"], errors="coerce").astype("Int64").astype("object")
 
     df = add_weather_kelvin(df)
+
+    # Optional: IEM ASOS/METAR visibility replacement for Open-Meteo visibility.
+    # Training-time only; see add_isd_visibility() docstring for serve-time caveat.
+    _isd_cfg = cfg.get("weather_isd") or {}
+    if bool(_isd_cfg.get("enabled", False)):
+        _isd_cache = _isd_cfg.get("cache_dir") or "../flightrightdata/weather_cache_isd"
+        _isd_cache_path = _abspath(str(_isd_cache), base="repo")
+        df = add_isd_visibility(df, _isd_cache_path)
+
     df = add_is_peak_hour(df)
     df = add_wind_x_precip(df)
 
