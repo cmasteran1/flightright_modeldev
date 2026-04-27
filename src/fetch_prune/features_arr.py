@@ -676,19 +676,20 @@ def main(cfg_path: str) -> None:
 
     # Departure-timing features: day-of-week and scheduled departure hour.
     # These are strong predictors for both departure and arrival delay.
-    if "dep_dt_local" in df.columns:
-        _dts = pd.to_datetime(df["dep_dt_local"], errors="coerce")
-        df["dep_dow"] = _dts.dt.dayofweek.astype("Int8")
-        df["sched_dep_hour"] = _dts.dt.hour.astype("Int8")
+    # Must read the pre-computed per-row ints from prepare_dataset; the round-tripped
+    # dep_dt_local parquet column has a single coerced tz (Chicago) so .dt.hour on it
+    # returns Chicago wall-clock, not origin-local.
+    if "sched_dep_hour" in df.columns and "dep_dow" in df.columns:
+        df["sched_dep_hour"] = pd.to_numeric(df["sched_dep_hour"], errors="coerce").astype("Int8")
+        df["dep_dow"] = pd.to_numeric(df["dep_dow"], errors="coerce").astype("Int8")
     else:
         _fd = pd.to_datetime(df["FlightDate"], errors="coerce")
         df["dep_dow"] = _fd.dt.dayofweek.astype("Int8")
         df["sched_dep_hour"] = pd.to_numeric(df.get("CRSDepTime"), errors="coerce").floordiv(100).astype("Int8")
 
     # Scheduled arrival hour — later arrivals accumulate more network delay.
-    if "arr_dt_local" in df.columns:
-        _dts_arr = pd.to_datetime(df["arr_dt_local"], errors="coerce")
-        df["sched_arr_hour"] = _dts_arr.dt.hour.astype("Int8")
+    if "sched_arr_hour" in df.columns:
+        df["sched_arr_hour"] = pd.to_numeric(df["sched_arr_hour"], errors="coerce").astype("Int8")
     else:
         df["sched_arr_hour"] = pd.to_numeric(df.get("CRSArrTime"), errors="coerce").floordiv(100).astype("Int8")
 

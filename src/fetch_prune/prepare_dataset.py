@@ -387,10 +387,70 @@ def add_timezone_local_times(df: pd.DataFrame, airports_meta: Dict[str, Tuple[fl
         dep_locals.append(dep_dt)
         arr_locals.append(arr_dt)
 
+    # Extract airport-local fields per-row from the tz-aware Python datetimes NOW, before
+    # assigning the mixed-tz list to a DataFrame column. pyarrow/parquet only supports a
+    # single timezone per datetime column, so the column gets silently coerced to one tz
+    # (Chicago in practice) at write-time; `.dt.hour` on the round-tripped column then
+    # returns that tz's wall-clock hour instead of the origin airport's. The underlying
+    # UTC instant is preserved (weather joins still work), but local-hour/dow extraction
+    # must happen here while each row still carries its own ZoneInfo.
+    df["sched_dep_hour"] = pd.array(
+        [d.hour if isinstance(d, datetime) else pd.NA for d in dep_locals], dtype="Int8"
+    )
+    df["sched_dep_minute"] = pd.array(
+        [d.minute if isinstance(d, datetime) else pd.NA for d in dep_locals], dtype="Int8"
+    )
+    df["dep_dow"] = pd.array(
+        [d.weekday() if isinstance(d, datetime) else pd.NA for d in dep_locals], dtype="Int8"
+    )
+    df["sched_arr_hour"] = pd.array(
+        [d.hour if isinstance(d, datetime) else pd.NA for d in arr_locals], dtype="Int8"
+    )
     df["dep_dt_local"] = dep_locals
     df["arr_dt_local"] = arr_locals
     df["dep_local_date"] = df["dep_dt_local"].apply(lambda x: x.date() if isinstance(x, datetime) else pd.NaT)
     df["arr_local_date"] = df["arr_dt_local"].apply(lambda x: x.date() if isinstance(x, datetime) else pd.NaT)
+    return df
+
+
+def replace_distance_with_haversine(
+    df: pd.DataFrame,
+    airports_meta: Dict[str, Tuple[float, float, str]],
+) -> pd.DataFrame:
+    """Overwrite BTS Distance (FAA-table miles) with great-circle haversine.
+
+    Production computes Distance from airport lat/lon at inference time
+    (`flightright/src/flightright/features/schedule.py::_haversine_miles`).
+    Training previously kept BTS's FAA-table value, producing a systematic
+    train/serve gap of up to ~6 mi on transcons (e.g. JFK↔SFO trained=2475,
+    served=2469.5). Computing haversine here makes both sides identical.
+    """
+    import math
+    R_MILES = 3958.8
+    df = df.copy()
+    df["Origin"] = df["Origin"].astype(str).str.upper()
+    df["Dest"] = df["Dest"].astype(str).str.upper()
+
+    def _hav(o: str, d: str) -> float:
+        if o not in airports_meta or d not in airports_meta:
+            return float("nan")
+        lat1, lon1, _ = airports_meta[o]
+        lat2, lon2, _ = airports_meta[d]
+        rlat1, rlat2 = math.radians(lat1), math.radians(lat2)
+        dlat = math.radians(lat2 - lat1)
+        dlon = math.radians(lon2 - lon1)
+        a = math.sin(dlat / 2) ** 2 + math.cos(rlat1) * math.cos(rlat2) * math.sin(dlon / 2) ** 2
+        return R_MILES * 2 * math.asin(math.sqrt(a))
+
+    pairs = list(zip(df["Origin"].astype(str), df["Dest"].astype(str)))
+    cache: Dict[Tuple[str, str], float] = {}
+    out = []
+    for o, d in pairs:
+        key = (o, d)
+        if key not in cache:
+            cache[key] = _hav(o, d)
+        out.append(cache[key])
+    df["Distance"] = out
     return df
 
 
@@ -1813,6 +1873,7 @@ def main():
     )
 
     df = add_timezone_local_times(df, airports_meta=airports_meta)
+    df = replace_distance_with_haversine(df, airports_meta=airports_meta)
 
     if bool(cfg.get("add_aircraft_type", True)):
         df = add_aircraft_type_from_faa_registry(df, cfg)

@@ -14,6 +14,7 @@ Assumes the smoke pipeline has already been run:
 Skips cleanly when the parquet file is missing.
 """
 from __future__ import annotations
+import os
 from pathlib import Path
 import pandas as pd
 import pytest
@@ -22,11 +23,18 @@ DATA = Path(__file__).parent.parent.parent.parent / "flightrightdata"
 SMOKE_PARQUET = DATA / "data/processed/features_dep_WN_v11_smoke_unbalanced.parquet"
 
 
+def _resolve_features_parquet() -> Path:
+    """Honor FLIGHTRIGHT_FEATURES_PARQUET to retarget at any features_dep parquet."""
+    env = os.environ.get("FLIGHTRIGHT_FEATURES_PARQUET")
+    return Path(env) if env else SMOKE_PARQUET
+
+
 @pytest.fixture(scope="module")
 def smoke_df() -> pd.DataFrame:
-    if not SMOKE_PARQUET.exists():
-        pytest.skip(f"v11 smoke parquet not found at {SMOKE_PARQUET}")
-    return pd.read_parquet(SMOKE_PARQUET)
+    p = _resolve_features_parquet()
+    if not p.exists():
+        pytest.skip(f"features parquet not found at {p}")
+    return pd.read_parquet(p)
 
 
 # ---------------- SCHEMA ----------------
@@ -120,6 +128,119 @@ def test_otp_rate_distribution_plausible(smoke_df):
     median = smoke_df[col].median()
     assert 0.4 <= median <= 0.95, (
         f"{col} median={median:.4f} outside plausible [0.4, 0.95]"
+    )
+
+
+# ---------------- LOCAL TIMEZONE INVARIANTS ----------------
+# Regression guard for the mixed-tz parquet-coercion bug in
+# src/fetch_prune/prepare_dataset.py::add_timezone_local_times. Building
+# dep_dt_local as a Python list of per-row tz-aware datetimes with different
+# ZoneInfos forces pyarrow to pick one tz for the whole column (observed:
+# America/Chicago), so .dt.hour on the round-tripped column returns Chicago
+# wall-clock instead of airport-local. Pre-fix, this silently corrupted
+# sched_dep_hour, is_peak_hour, and dep_dow for every non-Central airport
+# (PT +2, MT +1, ET -1 vs true local). BTS's raw CRSDepTime is already
+# airport-local HHMM, so it is the ground-truth anchor for these invariants.
+
+
+def _crs_hour(df: pd.DataFrame) -> pd.Series:
+    return (pd.to_numeric(df["CRSDepTime"], errors="coerce") // 100).astype("Int64")
+
+
+def test_sched_dep_hour_is_airport_local(smoke_df):
+    """sched_dep_hour must equal CRSDepTime // 100 (BTS HHMM is airport-local)."""
+    for c in ("sched_dep_hour", "CRSDepTime"):
+        if c not in smoke_df.columns:
+            pytest.skip(f"{c} missing")
+    sdh = pd.to_numeric(smoke_df["sched_dep_hour"], errors="coerce").astype("Int64")
+    crsh = _crs_hour(smoke_df)
+    mask = sdh.notna() & crsh.notna()
+    bad = smoke_df[mask & (sdh != crsh)]
+    assert bad.empty, (
+        f"sched_dep_hour != CRSDepTime//100 in {len(bad)}/{int(mask.sum())} rows — "
+        f"mixed-tz parquet-coercion bug regressed. First offender: "
+        f"Origin={bad.iloc[0]['Origin']} CRSDepTime={bad.iloc[0]['CRSDepTime']} "
+        f"sched_dep_hour={bad.iloc[0]['sched_dep_hour']}"
+    )
+
+
+def test_sched_dep_hour_in_range(smoke_df):
+    if "sched_dep_hour" not in smoke_df.columns:
+        pytest.skip("sched_dep_hour missing")
+    sdh = pd.to_numeric(smoke_df["sched_dep_hour"], errors="coerce")
+    bad = smoke_df[sdh.notna() & ((sdh < 0) | (sdh > 23))]
+    assert bad.empty, (
+        f"sched_dep_hour outside [0, 23] in {len(bad)} rows. "
+        f"First offender: {bad.iloc[0][['Origin', 'CRSDepTime', 'sched_dep_hour']].to_dict()}"
+    )
+
+
+def test_is_peak_hour_consistent_with_sched_dep_hour(smoke_df):
+    """is_peak_hour := 1 iff 16 <= sched_dep_hour <= 20 (v10+ feature spec)."""
+    for c in ("is_peak_hour", "sched_dep_hour"):
+        if c not in smoke_df.columns:
+            pytest.skip(f"{c} missing")
+    sdh = pd.to_numeric(smoke_df["sched_dep_hour"], errors="coerce").astype("Int64")
+    ip = pd.to_numeric(smoke_df["is_peak_hour"], errors="coerce").astype("Int64")
+    expected = ((sdh >= 16) & (sdh <= 20)).astype("Int64")
+    mask = sdh.notna() & ip.notna()
+    bad = smoke_df[mask & (ip != expected)]
+    assert bad.empty, (
+        f"is_peak_hour inconsistent with sched_dep_hour in {len(bad)} rows. "
+        f"First offender: Origin={bad.iloc[0]['Origin']} "
+        f"sched_dep_hour={bad.iloc[0]['sched_dep_hour']} "
+        f"is_peak_hour={bad.iloc[0]['is_peak_hour']}"
+    )
+
+
+def test_dep_dow_matches_flightdate_weekday(smoke_df):
+    """dep_dow is the airport-local day-of-week of FlightDate. A Chicago-coerced
+    column silently shifts ET late-night flights back one day; CT 0; MT/PT typically
+    unaffected because the CT→local delta is small at their wall-clock evening."""
+    for c in ("dep_dow", "FlightDate"):
+        if c not in smoke_df.columns:
+            pytest.skip(f"{c} missing")
+    dow = pd.to_numeric(smoke_df["dep_dow"], errors="coerce").astype("Int64")
+    assert dow.dropna().between(0, 6).all(), "dep_dow has values outside [0, 6]"
+    fd_dow = pd.to_datetime(smoke_df["FlightDate"], errors="coerce").dt.dayofweek.astype("Int64")
+    crs = pd.to_numeric(smoke_df.get("CRSDepTime"), errors="coerce")
+    # BTS FlightDate is the local departure date; a CRSDepTime < 2400 cannot cross
+    # midnight in local time, so dep_dow must equal FlightDate's weekday.
+    mask = dow.notna() & fd_dow.notna() & (crs < 2400)
+    bad = smoke_df[mask & (dow != fd_dow)]
+    assert bad.empty, (
+        f"dep_dow != FlightDate weekday in {len(bad)}/{int(mask.sum())} rows — "
+        f"tz-coercion bug suspected. First offender: "
+        f"Origin={bad.iloc[0]['Origin']} FlightDate={bad.iloc[0]['FlightDate']} "
+        f"CRSDepTime={bad.iloc[0]['CRSDepTime']} dep_dow={bad.iloc[0]['dep_dow']}"
+    )
+
+
+def test_no_per_origin_systematic_hour_shift(smoke_df):
+    """Per-origin, sched_dep_hour must not be offset from CRSDepTime//100 by any
+    constant. Under the Chicago-coercion bug, every PT airport shows delta=+2,
+    every MT +1, every ET -1 — test_sched_dep_hour_is_airport_local already
+    catches this row-by-row, but this version produces a cleaner failure message
+    grouped by origin so a reviewer can see the pattern at a glance."""
+    for c in ("sched_dep_hour", "Origin", "CRSDepTime"):
+        if c not in smoke_df.columns:
+            pytest.skip(f"{c} missing")
+    sdh = pd.to_numeric(smoke_df["sched_dep_hour"], errors="coerce").astype("Int64")
+    crsh = _crs_hour(smoke_df)
+    df = smoke_df.assign(_delta=(sdh - crsh))
+    df = df[df["_delta"].notna()]
+    bad = []
+    for origin, g in df.groupby("Origin"):
+        if len(g) < 20:
+            continue
+        nonzero_frac = float((g["_delta"] != 0).mean())
+        if nonzero_frac > 0.02:
+            modal = int(g["_delta"].mode().iloc[0])
+            bad.append((origin, round(nonzero_frac, 3), modal, len(g)))
+    assert not bad, (
+        f"{len(bad)} origins show a systematic sched_dep_hour shift (>2% of rows). "
+        f"Chicago-coercion bug signature: PT +2, MT +1, ET -1. "
+        f"Offenders (origin, nonzero_frac, modal_delta, n_rows): {bad[:10]}"
     )
 
 

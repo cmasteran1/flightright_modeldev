@@ -744,11 +744,17 @@ def add_flightnum_od_depdelay_means_from_history(
             out_supp.loc[df_idx_i[i_df]] = np.int16(min(supp, np.iinfo(np.int16).max))
             out_low.loc[df_idx_i[i_df]] = np.int8(1 if supp <= int(low_support_leq) else 0)
 
-            dv = float(df_delay_i[i_df]) if np.isfinite(df_delay_i[i_df]) else np.nan
-            if np.isfinite(dv):
-                lastN.append(dv)
-                _push_to_all(next_df_date, dv)
-
+            # Do NOT push the current df row into the rolling buffers. The
+            # standard pipeline passes `hist` as a superset of `df` (history
+            # pool covers the same date range plus earlier warmup), so when
+            # the next df row in this key group is processed, the inner
+            # while loop above will pick this row up from `hist`. Pushing it
+            # here too caused every prior row to be counted twice in the
+            # buffers — a 2x inflation of `flightnum_od_support_count_last14d`
+            # observed via parity audit on 2026-04-25 (training said 18,
+            # production correctly reported 9 for the same flight). Means,
+            # medians, and stds were invariant to the doubling, so they
+            # were unaffected by this bug.
             i_df += 1
 
     for w in windows:
@@ -2030,7 +2036,10 @@ def add_dep_labels_for_thresholds(df: pd.DataFrame, thresholds: List[int], delay
 
 
 def balance_to_pos_frac(df: pd.DataFrame, label_col: str, pos_frac: float, seed: int, max_rows: Optional[int]) -> pd.DataFrame:
-    df = df.copy()
+    # Don't copy — caller's frame is treated as read-only. The previous
+    # `df = df.copy()` doubled memory on a 3.5M-row v11 train_pool and
+    # triggered macOS jetsam SIGKILL during the per-threshold balanced
+    # sampling step. The function only reads from `df`; copy is unneeded.
     y = df[label_col].astype(int)
     pos = df[y == 1]
     neg = df[y == 0]
@@ -2225,10 +2234,12 @@ def main():
 
     df["od_pair"] = df["Origin"] + "_" + df["Dest"]
 
-    if "dep_dt_local" in df.columns:
-        dts = pd.to_datetime(df["dep_dt_local"], errors="coerce")
-        df["dep_dow"] = dts.dt.dayofweek.astype("Int8")
-        df["sched_dep_hour"] = dts.dt.hour.astype("Int8")
+    # dep_dow / sched_dep_hour must be airport-local. prepare_dataset.add_timezone_local_times
+    # emits them per-row from tz-aware datetimes; reading them back from dep_dt_local here
+    # would yield the parquet column's coerced tz (Chicago), not the origin airport's local.
+    if "sched_dep_hour" in df.columns and "dep_dow" in df.columns:
+        df["sched_dep_hour"] = pd.to_numeric(df["sched_dep_hour"], errors="coerce").astype("Int8")
+        df["dep_dow"] = pd.to_numeric(df["dep_dow"], errors="coerce").astype("Int8")
     else:
         fd = pd.to_datetime(df["FlightDate"], errors="coerce")
         df["dep_dow"] = fd.dt.dayofweek.astype("Int8")
@@ -2471,6 +2482,14 @@ def main():
         eval_path.parent.mkdir(parents=True, exist_ok=True)
         eval_df.to_parquet(eval_path, index=False)
         print(f"[OK] wrote feature eval unbalanced -> {eval_path}")
+        # Free memory before per-threshold balanced sampling — both `df` and
+        # `eval_df` are no longer needed once train_pool is materialized as
+        # an independent copy. On 4-year v11 data, holding all three in
+        # memory plus a balanced sampler triggers macOS jetsam.
+        import gc as _gc
+        del eval_df
+        del df
+        _gc.collect()
 
     thr_list = [int(x) for x in (fb.get("thresholds") or thresholds)]
     pos_frac = float(fb.get("pos_frac", 0.50))
@@ -2492,6 +2511,10 @@ def main():
         out_p.parent.mkdir(parents=True, exist_ok=True)
         bal_df.to_parquet(out_p, index=False)
         print(f"[OK] wrote balanced feature train thr={thr} -> {out_p}")
+        # Free per-threshold sampled frame before next iteration — keeps
+        # peak memory at one pool + one bal_df rather than four.
+        del bal_df
+        _gc.collect()
 
 
 if __name__ == "__main__":
