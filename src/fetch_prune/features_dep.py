@@ -2309,17 +2309,35 @@ def main():
     n_recent = int(feat_cfg.get("n_recent_flightnum_od", 20))
     low_support_leq = int(feat_cfg.get("low_support_leq", 2))
 
+    # All delay-statistic rolling features (mean / median / std / late-aircraft
+    # rate / OD support count) must operate on non-cancelled history only,
+    # because the production seeder masks cancelled flights before computing
+    # dep_delay_sum (build_bts_rollups.py) and AeroDataBox does not return
+    # delays for cancelled flights at predict time. Without this filter,
+    # cancelled-with-DepDelayMinutes rows ("pushed back, then cancelled" —
+    # ~0.3-1% of BTS rows on busy ops days) leak into training rolling means
+    # at ~+0.10 min vs production. Cancellation-rate features
+    # (add_cancel_rate_origin, add_airline_cancel_rate_anomaly) and
+    # divert/NAS-rate features keep the unfiltered `hist`.
+    if "Cancelled" in hist.columns:
+        _canc = pd.to_numeric(hist["Cancelled"], errors="coerce").fillna(0)
+        hist_for_delays = hist[_canc == 0].copy()
+        print(f"[INFO] hist_for_delays: {len(hist_for_delays):,} non-cancelled rows "
+              f"(dropped {len(hist) - len(hist_for_delays):,} cancelled)")
+    else:
+        hist_for_delays = hist
+
     df = add_flightnum_od_depdelay_means_from_history(
         df,
-        hist,
+        hist_for_delays,
         windows_days=windows_days,
         n_recent=n_recent,
         low_support_leq=low_support_leq,
     )
 
-    df = add_carrier_dep_delay_baselines_from_history_multi(df, hist, windows_days=windows_days)
-    df = add_origin_dep_delay_baselines_from_history_multi(df, hist, windows_days=windows_days)
-    df = add_delay_cause_rates_from_history(df, hist, windows_days=windows_days)
+    df = add_carrier_dep_delay_baselines_from_history_multi(df, hist_for_delays, windows_days=windows_days)
+    df = add_origin_dep_delay_baselines_from_history_multi(df, hist_for_delays, windows_days=windows_days)
+    df = add_delay_cause_rates_from_history(df, hist_for_delays, windows_days=windows_days)
 
     # v10: hybrid mean/median rule. Replaces the rolling-mean-of-daily-means at the 1-day window
     # with a true median over the previous day's flight rows. Reduces the pessimism v9 saw on
@@ -2327,12 +2345,12 @@ def main():
     median_last1_cfg = feat_cfg.get("delay_median_last1") or {}
     if median_last1_cfg.get("enabled", False):
         print("[INFO] v10: computing median-last1 baselines for carrier/dest/hub")
-        df = add_carrier_dep_delay_median_last1(df, hist)
-        df = add_dest_depdelay_median_last1(df, hist)
+        df = add_carrier_dep_delay_median_last1(df, hist_for_delays)
+        df = add_dest_depdelay_median_last1(df, hist_for_delays)
         # Hub list resolved further down; resolve here too so the median path matches.
         _hub_cfg = feat_cfg.get("hub_spillover") or {}
         _hub_hubs = _hub_cfg.get("hubs") or AIRLINE_HUB_PRESETS.get(str(_hub_cfg.get("airline") or "WN").upper())
-        df = add_hub_depdelay_median_last1(df, hist, hubs=_hub_hubs or [])
+        df = add_hub_depdelay_median_last1(df, hist_for_delays, hubs=_hub_hubs or [])
 
     # v10: AeroDataBox-compatible aggregates. Each is gated by its own feature flag so v8
     # pipelines stay byte-identical when the flag is absent.
@@ -2361,7 +2379,7 @@ def main():
         strike_cache = strike_cfg.get("cache_path", "../flightrightdata/strike_cache/us_aviation_labor_actions.parquet")
         strike_cache_resolved = _abspath(strike_cache, base="repo")
         df = add_strike_proximity_features(df, str(strike_cache_resolved))
-        df = add_carrier_delay_rate_anomaly(df, hist)
+        df = add_carrier_delay_rate_anomaly(df, hist_for_delays)
     else:
         print("[INFO] Strike features disabled (set features_dep.strike.enabled=true to enable)")
 
@@ -2375,7 +2393,7 @@ def main():
 
     dest_cfg = feat_cfg.get("dest_rolling") or {}
     if dest_cfg.get("enabled", True):
-        df = add_dest_rolling_stats(df, hist, windows_days=windows_days)
+        df = add_dest_rolling_stats(df, hist_for_delays, windows_days=windows_days)
 
     hub_cfg = feat_cfg.get("hub_spillover") or {}
     hub_hubs = hub_cfg.get("hubs") or None
@@ -2394,7 +2412,7 @@ def main():
             print(f"[INFO] hub_spillover: using preset hubs for airline={hub_airline}: {hub_hubs}")
         else:
             print(f"[WARN] hub_spillover: no preset for airline={hub_airline!r}; add to AIRLINE_HUB_PRESETS or set hub_spillover.hubs explicitly")
-    df = add_hub_spillover_from_history(df, hist, windows_days=windows_days, hubs=hub_hubs)
+    df = add_hub_spillover_from_history(df, hist_for_delays, windows_days=windows_days, hubs=hub_hubs)
     df = add_hub_max_lateaircraft_last1(df)
 
     wx_cfg = feat_cfg.get("hub_weather") or {}
