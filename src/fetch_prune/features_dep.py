@@ -1320,6 +1320,15 @@ def add_flightnum_od_otp_rate_last14d(df: pd.DataFrame, hist: pd.DataFrame) -> p
     +0.49 at y_dep_ge120 on the WN June-2025 slice). Logistic log-loss lift of
     +1.5% to +2.2% at all v11 thresholds when added alongside the median.
 
+    Aggregation: **per-flight** mean of the on-time indicator over the trailing
+    14-calendar-day window (not mean-of-daily-rates). This matches serving's
+    `flightright.features.flightnumber_history.build_flightnum_od_history`
+    which computes `sum(on_time) / len(on_time)` over individual flights.
+    Surfaced in the v11 stage-1 gate scorecard as avg_z=0.565 against BTS:
+    the prior mean-of-daily-rates aggregation diverged on double-track
+    (same-OD-twice-a-day) flight numbers, weighting each day equally instead
+    of each flight equally. Both sides now agree.
+
     Returns a new `flightnum_od_otp_rate_last14d` column in [0, 1]. ~7% of rows lack
     this value (new flight-number-OD identities without 14d history); NaN is left as-is
     for CatBoost's native missing-value handling.
@@ -1351,27 +1360,46 @@ def add_flightnum_od_otp_rate_last14d(df: pd.DataFrame, hist: pd.DataFrame) -> p
     h = h.dropna(subset=required).copy()
     h["_on_time"] = (h["DepDelayMinutes"] <= 15).astype(float)
 
-    # Daily per-identity on-time rate
-    daily = (
-        h.groupby([carrier_col, flightnum_col, "Origin", "Dest", "FlightDate"], as_index=False)
-        .agg(_daily_on_time=("_on_time", "mean"))
-        .sort_values([carrier_col, flightnum_col, "Origin", "Dest", "FlightDate"])
-    )
+    # Per-flight rolling mean of `_on_time` over a trailing 14-calendar-day
+    # window per (carrier, flightnum, origin, dest), shifted 1 day forward
+    # to avoid leakage of the current row. Each historical flight contributes
+    # equally; double-track days don't get artificially down-weighted.
+    key_cols = [carrier_col, flightnum_col, "Origin", "Dest"]
+    h_sorted = h.sort_values(key_cols + ["FlightDate"]).copy()
 
-    # 14-day rolling mean over daily rates, shifted 1 day forward
-    def _roll(g: pd.DataFrame) -> pd.DataFrame:
-        g = g.sort_values("FlightDate").copy()
-        g["flightnum_od_otp_rate_last14d"] = (
-            g["_daily_on_time"].shift(1).rolling(window=14, min_periods=1).mean()
-        )
+    def _roll_per_flight(g: pd.DataFrame) -> pd.DataFrame:
+        g = g.sort_values("FlightDate").reset_index(drop=True)
+        # Trailing 14-day window keyed on FlightDate; each flight's value is the
+        # mean of `_on_time` over rows whose FlightDate is in
+        # [current_FlightDate - 14d, current_FlightDate - 1d] (strictly before).
+        cutoffs_lo = g["FlightDate"] - pd.Timedelta(days=14)
+        cutoffs_hi = g["FlightDate"] - pd.Timedelta(days=1)
+        dates = g["FlightDate"].to_numpy()
+        on_time = g["_on_time"].to_numpy(dtype=np.float64)
+        rates = np.full(len(g), np.nan)
+        for i in range(len(g)):
+            lo = cutoffs_lo.iloc[i]
+            hi = cutoffs_hi.iloc[i]
+            mask = (dates >= np.datetime64(lo)) & (dates <= np.datetime64(hi))
+            if mask.any():
+                rates[i] = on_time[mask].mean()
+        g["flightnum_od_otp_rate_last14d"] = rates
         return g
 
-    daily = (
-        daily.groupby([carrier_col, flightnum_col, "Origin", "Dest"], group_keys=False)
-        .apply(_roll)
+    rolled = (
+        h_sorted.groupby(key_cols, group_keys=False)
+        .apply(_roll_per_flight)
     )
 
-    # Rename identity columns to match the target df schema
+    # Per-flight rates collapsed to per-(identity, date) so the merge into df
+    # is unambiguous: BTS flights are unique per (identity, date) AFTER the
+    # cancel filter for any given date — but a defensive `groupby(...).mean()`
+    # absorbs the rare case of duplicate scheduled rows.
+    daily = (
+        rolled.groupby(key_cols + ["FlightDate"], as_index=False)
+        ["flightnum_od_otp_rate_last14d"].mean()
+    )
+
     daily = daily.rename(columns={carrier_col: "Reporting_Airline",
                                    flightnum_col: "Flight_Number_Reporting_Airline"})
 

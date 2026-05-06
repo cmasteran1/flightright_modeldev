@@ -1,0 +1,134 @@
+{
+  "_comment": "v11 BUG-FIX RETRAIN (2026-05-06): same feature set and model architecture as deployed v11; retraining purely to absorb code-level fixes. Bugs fixed: (1) airports.csv timezones for ECP/VPS/PNS (FL Panhandle Eastern->Central) and AZA/FLG/PRC/YUM (AZ regional Denver->Phoenix), correcting `dep_dt_local` UTC instants and hourly weather joins for these airports; (2) flightnum_od_otp_rate_last14d aggregation (training was mean-of-daily-rates, now per-flight to match serving's calculation); (3) flightnum_od_support_count_last14d 2x double-count in the deployed parquet (training code already fixed 2026-04-25; retrain absorbs the fix into the bundle). Date range narrowed to 2023-01-01..2025-12-31 (3 years). Bundle joblib filename unchanged so S3 upload overwrites the deployed v11 bundles. See exploration/v11_bugfix_retrain_plan.md.",
+  "_workflow": {
+    "step_0": "python src/fetch_prune/collect_strike_cache.py",
+    "step_1": "python src/fetch_prune/prepare_dataset.py data/blueprint_dep_WN_v11_retrain.json",
+    "step_2": "python src/fetch_prune/features_dep.py data/blueprint_dep_WN_v11_retrain.json"
+  },
+  "_path_note": "Output paths use 'data/...' (resolved against DATA_ROOT = ../flightrightdata/). Input/meta paths use '../flightrightdata/data/...' (resolved against REPO_ROOT).",
+  "target": "dep",
+  "input_flights_path": [
+    "../flightrightdata/data/raw_bts/Year=2023/Month=*/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2024/Month=*/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2025/Month=*/flights.parquet"
+  ],
+  "history_flights_path": [
+    "../flightrightdata/data/raw_bts/Year=2022/Month=1[1-2]/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2023/Month=*/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2024/Month=*/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2025/Month=*/flights.parquet"
+  ],
+  "airports_csv": "../flightrightdata/data/meta/airports.csv",
+  "airports_filter_csv": "../flightrightdata/data/meta/airport_rankings/WN_top_100.csv",
+  "airlines": [
+    "WN"
+  ],
+  "start_date": "2023-01-01",
+  "end_date": "2025-12-31",
+  "weather": {
+    "daily": true,
+    "hourly_at_dep": true,
+    "dest_daily": false,
+    "dest_hourly_at_arr": false,
+    "cache_dir": "../flightrightdata/weather_cache",
+    "hourly_cache_dir": "../flightrightdata/weather_cache_hourly",
+    "historical_cache_dir": "../flightrightdata/weather_cache_historical"
+  },
+  "strike": {
+    "enabled": true,
+    "cache_path": "../flightrightdata/strike_cache/us_aviation_labor_actions.parquet"
+  },
+  "add_aircraft_type": false,
+  "add_aircraft_age": false,
+  "history_lookback_days": 60,
+  "output_enriched_unbalanced_path": "data/intermediate/WN_v11_retrain_unbalanced.parquet",
+  "history_output_path": "data/intermediate/history_pool_dep_WN_v11_retrain.parquet",
+  "features_dep": {
+    "holiday_windows": {
+      "thanksgiving": 2,
+      "christmas": 3
+    },
+    "n_recent_flightnum_od": 30,
+    "low_support_leq": 2,
+    "rolling_windows_days": [
+      1,
+      7,
+      14
+    ],
+    "hub_spillover": {
+      "airline": "WN",
+      "hubs": [
+        "DEN",
+        "PHX",
+        "BWI",
+        "MDW",
+        "BNA"
+      ]
+    },
+    "hub_weather": {
+      "enabled": false
+    },
+    "tail_history": {
+      "enabled": false
+    },
+    "dest_rolling": {
+      "enabled": true
+    },
+    "prior_leg": {
+      "enabled": false
+    },
+    "strike": {
+      "enabled": true,
+      "cache_path": "../flightrightdata/strike_cache/us_aviation_labor_actions.parquet"
+    },
+    "delay_median_last1": {
+      "enabled": true
+    },
+    "nas_rate_last1d": {
+      "enabled": false
+    },
+    "cancel_rate_last1d": {
+      "enabled": true
+    },
+    "divert_rate_last14d": {
+      "enabled": true
+    },
+    "otp_rate_last14d": {
+      "enabled": true
+    },
+    "cancel_anomaly_7d": {
+      "enabled": true
+    }
+  },
+  "output_features_unbalanced_path": "data/processed/features_dep_WN_v11_retrain_unbalanced.parquet",
+  "balance": {
+    "thresholds": [
+      15,
+      30,
+      60,
+      120
+    ],
+    "delay_col": "DepDelayMinutes",
+    "pos_frac": 0.4
+  },
+  "feature_balance": {
+    "enabled": true,
+    "eval": {
+      "enabled": true,
+      "by": "random",
+      "eval_frac": 0.15,
+      "seed": 42,
+      "output_path": "data/processed/features_dep_WN_v11_retrain_eval_unbalanced.parquet"
+    },
+    "thresholds": [
+      15,
+      30,
+      60,
+      120
+    ],
+    "pos_frac": 0.4,
+    "seed": 42,
+    "output_template": "data/processed/train_dep_ge{thr}_balanced_WN_v11_retrain.parquet",
+    "max_rows": 3000000
+  }
+}
