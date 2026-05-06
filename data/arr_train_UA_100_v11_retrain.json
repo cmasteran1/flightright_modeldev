@@ -5,9 +5,9 @@
     "run": "python src/training/train_arr_bins_ordinal_catboost.py data/arr_train_UA_100_v11_retrain.json"
   },
   "_path_note": "All relative paths resolved against DATA_ROOT (../flightrightdata/).",
-  "input_features_path": "data/processed/features_arr_UA_v11_retrain_unbalanced.parquet",
-  "eval_features_path": "data/processed/features_arr_UA_v11_retrain_eval_unbalanced.parquet",
-  "outdir": "data/models/arr_UA_100_v11/",
+  "input_features_path": "../flightrightdata/data/processed/features_arr_UA_v11_retrain_unbalanced.parquet",
+  "eval_features_path": "../flightrightdata/data/processed/features_arr_UA_v11_retrain_eval_unbalanced.parquet",
+  "outdir": "../flightrightdata/data/models/arr_UA_100_v11/",
   "thresholds": [
     15,
     30,
@@ -15,7 +15,7 @@
     120
   ],
   "feature_balance": {
-    "output_template": "data/processed/train_arr_ge{thr}_balanced_UA_v11_retrain.parquet"
+    "output_template": "../flightrightdata/data/processed/train_arr_ge{thr}_balanced_UA_v11_retrain.parquet"
   },
   "training": {
     "seed": 1337,
