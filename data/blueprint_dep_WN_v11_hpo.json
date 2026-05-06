@@ -1,5 +1,5 @@
 {
-  "_comment": "HPO-scale variant of blueprint_dep_WN_v11. Mid-sized for local hyperparameter sweeps: 6 months of 2025 (Jan-Jun) at top 50 airports. ~300k rows — meaningful for detecting hyperparameter differences while keeping trials fast (~2-3 min each). History pool extends back 60 days into Nov 2024. Strike enabled if cache present. All v11 feature flags match production (NAS off, OTP on, cancel_anomaly on).",
+  "_comment": "HPO-scale variant of blueprint_dep_WN_v11. Mid-sized for local hyperparameter sweeps: 6 months of 2025 (Jan-Jun) at top 50 airports. ~300k rows \u2014 meaningful for detecting hyperparameter differences while keeping trials fast (~2-3 min each). History pool extends back 60 days into Nov 2024. Strike enabled if cache present. All v11 feature flags match production (NAS off, OTP on, cancel_anomaly on).",
   "_workflow": {
     "step_0": "python src/fetch_prune/collect_strike_cache.py",
     "step_1": "python src/fetch_prune/prepare_dataset.py data/blueprint_dep_WN_v11_hpo.json",
@@ -42,8 +42,8 @@
   "add_aircraft_type": false,
   "add_aircraft_age": false,
   "history_lookback_days": 60,
-  "output_enriched_unbalanced_path": "data/intermediate/WN_v11_hpo_unbalanced.parquet",
-  "history_output_path": "data/intermediate/history_pool_dep_WN_v11_hpo.parquet",
+  "output_enriched_unbalanced_path": "../flightrightdata/data/intermediate/WN_v11_hpo_unbalanced.parquet",
+  "history_output_path": "../flightrightdata/data/intermediate/history_pool_dep_WN_v11_hpo.parquet",
   "features_dep": {
     "holiday_windows": {
       "thanksgiving": 2,
@@ -51,26 +51,63 @@
     },
     "n_recent_flightnum_od": 30,
     "low_support_leq": 2,
-    "rolling_windows_days": [1, 7, 14],
+    "rolling_windows_days": [
+      1,
+      7,
+      14
+    ],
     "hub_spillover": {
       "airline": "WN",
-      "hubs": ["DEN", "PHX", "BWI", "MDW", "BNA"]
+      "hubs": [
+        "DEN",
+        "PHX",
+        "BWI",
+        "MDW",
+        "BNA"
+      ]
     },
-    "hub_weather": { "enabled": false },
-    "tail_history": { "enabled": false },
-    "dest_rolling": { "enabled": true },
-    "prior_leg": { "enabled": false },
-    "strike": { "enabled": false },
-    "delay_median_last1": { "enabled": true },
-    "nas_rate_last1d": { "enabled": false },
-    "cancel_rate_last1d": { "enabled": true },
-    "divert_rate_last14d": { "enabled": true },
-    "otp_rate_last14d": { "enabled": true },
-    "cancel_anomaly_7d": { "enabled": true }
+    "hub_weather": {
+      "enabled": false
+    },
+    "tail_history": {
+      "enabled": false
+    },
+    "dest_rolling": {
+      "enabled": true
+    },
+    "prior_leg": {
+      "enabled": false
+    },
+    "strike": {
+      "enabled": false
+    },
+    "delay_median_last1": {
+      "enabled": true
+    },
+    "nas_rate_last1d": {
+      "enabled": false
+    },
+    "cancel_rate_last1d": {
+      "enabled": true
+    },
+    "divert_rate_last14d": {
+      "enabled": true
+    },
+    "otp_rate_last14d": {
+      "enabled": true
+    },
+    "cancel_anomaly_7d": {
+      "enabled": true
+    }
   },
-  "output_features_unbalanced_path": "data/processed/features_dep_WN_v11_hpo_unbalanced.parquet",
+  "output_features_unbalanced_path": "../flightrightdata/data/processed/features_dep_WN_v11_hpo_unbalanced.parquet",
   "balance": {
-    "thresholds": [15, 30, 60, 120],
+    "thresholds": [
+      15,
+      30,
+      60,
+      120
+    ],
     "delay_col": "DepDelayMinutes",
     "pos_frac": 0.4
   },
@@ -79,14 +116,19 @@
     "eval": {
       "enabled": true,
       "by": "random",
-      "eval_frac": 0.15,
+      "eval_frac": 0.85,
       "seed": 42,
-      "output_path": "data/processed/features_dep_WN_v11_hpo_eval_unbalanced.parquet"
+      "output_path": "../flightrightdata/data/processed/features_dep_WN_v11_hpo_eval_unbalanced.parquet"
     },
-    "thresholds": [15, 30, 60, 120],
+    "thresholds": [
+      15,
+      30,
+      60,
+      120
+    ],
     "pos_frac": 0.4,
     "seed": 42,
-    "output_template": "data/processed/train_dep_ge{thr}_balanced_WN_v11_hpo.parquet",
+    "output_template": "../flightrightdata/data/processed/train_dep_ge{thr}_balanced_WN_v11_hpo.parquet",
     "max_rows": 3000000
   }
 }

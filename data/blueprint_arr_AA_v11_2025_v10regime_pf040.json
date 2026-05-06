@@ -1,0 +1,59 @@
+{
+  "_comment": "v10-regime 2025 test: eval_frac=0.15, pos_frac=0.4. Isolates the root-cause config setting identified on WN dep (eval_frac was flipped from 0.15 in v10 to 0.85 in v11, causing ~-0.02 AUC). See exploration/reports/2026-04-20-v10-v11-shared-eval-auc.md",
+  "_workflow": {
+    "prerequisite": "Complete both steps of blueprint_dep_AA_v11_2025.json first.",
+    "step_1": "python src/fetch_prune/features_arr.py data/blueprint_arr_AA_v11_2025.json"
+  },
+  "_path_note": "All data paths use '../flightrightdata/data/...' (REPO_ROOT-relative) because features_arr.py resolves all paths against REPO_ROOT.",
+  "target": "arr",
+  "output_enriched_unbalanced_path": "../flightrightdata/data/intermediate/AA_v11_2025_unbalanced.parquet",
+  "history_output_path": "../flightrightdata/data/intermediate/history_pool_dep_AA_v11_2025.parquet",
+  "start_date": "2025-01-01",
+  "end_date": "2025-12-31",
+  "dep_features_unbalanced_path": "../flightrightdata/data/processed/features_dep_AA_v11_2025_unbalanced.parquet",
+  "thresholds": [
+    15,
+    30,
+    60,
+    120
+  ],
+  "dest_weather": {
+    "enabled": true,
+    "airports_csv": "../flightrightdata/data/meta/airports.csv",
+    "hourly_cache_dir": "../flightrightdata/weather_cache_dest_hourly",
+    "historical_cache_dir": "../flightrightdata/weather_cache_historical"
+  },
+  "arrdelay_median_14d": {
+    "enabled": true
+  },
+  "recent_airtime": {
+    "enabled": false
+  },
+  "wheels_off_slip": {
+    "enabled": false
+  },
+  "elapsed_time_ratio": {
+    "enabled": true
+  },
+  "output_features_unbalanced_path": "../flightrightdata/data/processed/features_arr_AA_v11_2025_unbalanced.parquet",
+  "feature_balance": {
+    "enabled": true,
+    "eval": {
+      "enabled": true,
+      "by": "random",
+      "eval_frac": 0.15,
+      "seed": 42,
+      "output_path": "../flightrightdata/data/processed/features_arr_AA_v11_2025_v10regime_eval_unbalanced.parquet"
+    },
+    "thresholds": [
+      15,
+      30,
+      60,
+      120
+    ],
+    "pos_frac": 0.4,
+    "seed": 42,
+    "output_template": "../flightrightdata/data/processed/train_arr_ge{thr}_balanced_AA_v11_2025_v10regime_pf040.parquet",
+    "max_rows": 3000000
+  }
+}

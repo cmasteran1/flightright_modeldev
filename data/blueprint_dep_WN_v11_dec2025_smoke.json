@@ -1,0 +1,124 @@
+{
+  "_comment": "v11 smoke, Dec 2025 only. Derived from blueprint_dep_WN_v11_smoke.json (June 2025). Same v11 feature set, smoke-scale (WN top-20 airports, single airline, 200 CatBoost iters via smoke train config). Used to sanity-check whether v11's reported smoke AUC on June 2025 reproduces on Dec 2025 BTS data. BTS-only input; Open-Meteo weather cache already populated through 2025-12-31 for WN hubs.",
+  "_workflow": {
+    "step_1": "python src/fetch_prune/prepare_dataset.py data/blueprint_dep_WN_v11_dec2025_smoke.json",
+    "step_2": "python src/fetch_prune/features_dep.py    data/blueprint_dep_WN_v11_dec2025_smoke.json"
+  },
+  "target": "dep",
+  "input_flights_path": [
+    "../flightrightdata/data/raw_bts/Year=2025/Month=12/flights.parquet"
+  ],
+  "history_flights_path": [
+    "../flightrightdata/data/raw_bts/Year=2025/Month=11/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2025/Month=12/flights.parquet"
+  ],
+  "airports_csv": "../flightrightdata/data/meta/airports.csv",
+  "airports_filter_csv": "../flightrightdata/data/meta/airport_rankings/WN_top_20.csv",
+  "airlines": [
+    "WN"
+  ],
+  "start_date": "2025-12-01",
+  "end_date": "2025-12-29",
+  "weather": {
+    "daily": true,
+    "hourly_at_dep": true,
+    "dest_daily": false,
+    "dest_hourly_at_arr": false,
+    "cache_dir": "../flightrightdata/weather_cache",
+    "hourly_cache_dir": "../flightrightdata/weather_cache_hourly",
+    "historical_cache_dir": "../flightrightdata/weather_cache_historical"
+  },
+  "strike": {
+    "enabled": false
+  },
+  "add_aircraft_type": false,
+  "add_aircraft_age": false,
+  "history_lookback_days": 20,
+  "output_enriched_unbalanced_path": "../flightrightdata/data/intermediate/WN_v11_dec2025_smoke_unbalanced.parquet",
+  "history_output_path": "../flightrightdata/data/intermediate/history_pool_dep_WN_v11_dec2025_smoke.parquet",
+  "features_dep": {
+    "holiday_windows": {
+      "thanksgiving": 2,
+      "christmas": 3
+    },
+    "n_recent_flightnum_od": 30,
+    "low_support_leq": 2,
+    "rolling_windows_days": [
+      1,
+      7,
+      14
+    ],
+    "hub_spillover": {
+      "airline": "WN",
+      "hubs": [
+        "DEN",
+        "PHX",
+        "BWI",
+        "MDW",
+        "BNA"
+      ]
+    },
+    "hub_weather": {
+      "enabled": false
+    },
+    "tail_history": {
+      "enabled": false
+    },
+    "dest_rolling": {
+      "enabled": true
+    },
+    "prior_leg": {
+      "enabled": false
+    },
+    "strike": {
+      "enabled": false
+    },
+    "delay_median_last1": {
+      "enabled": true
+    },
+    "nas_rate_last1d": {
+      "enabled": false
+    },
+    "cancel_rate_last1d": {
+      "enabled": true
+    },
+    "divert_rate_last14d": {
+      "enabled": true
+    },
+    "otp_rate_last14d": {
+      "enabled": true
+    },
+    "cancel_anomaly_7d": {
+      "enabled": false
+    }
+  },
+  "output_features_unbalanced_path": "../flightrightdata/data/processed/features_dep_WN_v11_dec2025_smoke_unbalanced.parquet",
+  "balance": {
+    "thresholds": [
+      15,
+      30,
+      60,
+      120
+    ],
+    "delay_col": "DepDelayMinutes"
+  },
+  "feature_balance": {
+    "enabled": true,
+    "eval": {
+      "enabled": true,
+      "by": "random",
+      "eval_frac": 0.85,
+      "seed": 42,
+      "output_path": "../flightrightdata/data/processed/features_dep_WN_v11_dec2025_smoke_eval_unbalanced.parquet"
+    },
+    "thresholds": [
+      15,
+      30,
+      60,
+      120
+    ],
+    "pos_frac": 0.5,
+    "seed": 42,
+    "output_template": "../flightrightdata/data/processed/train_dep_ge{thr}_balanced_WN_v11_dec2025_smoke.parquet"
+  }
+}

@@ -5,9 +5,9 @@
     "run": "python src/training/train_dep_bins_ordinal_catboost.py data/dep_train_DL_100_v11.json"
   },
   "_path_note": "All relative paths are resolved against DATA_ROOT (../flightrightdata/).",
-  "input_features_path": "data/processed/features_dep_DL_v11_unbalanced.parquet",
-  "eval_features_path": "data/processed/features_dep_DL_v11_eval_unbalanced.parquet",
-  "outdir": "data/models/dep_DL_100_v11/",
+  "input_features_path": "../flightrightdata/data/processed/features_dep_DL_v11_unbalanced.parquet",
+  "eval_features_path": "../flightrightdata/data/processed/features_dep_DL_v11_eval_unbalanced.parquet",
+  "outdir": "../flightrightdata/data/models/dep_DL_100_v11/",
   "thresholds": [
     15,
     30,
@@ -16,10 +16,10 @@
   ],
   "random_seed": 1337,
   "per_threshold_train_paths": {
-    "15": "data/processed/train_dep_ge15_balanced_DL_v11.parquet",
-    "30": "data/processed/train_dep_ge30_balanced_DL_v11.parquet",
-    "60": "data/processed/train_dep_ge60_balanced_DL_v11.parquet",
-    "120": "data/processed/train_dep_ge120_balanced_DL_v11.parquet"
+    "15": "../flightrightdata/data/processed/train_dep_ge15_balanced_DL_v11.parquet",
+    "30": "../flightrightdata/data/processed/train_dep_ge30_balanced_DL_v11.parquet",
+    "60": "../flightrightdata/data/processed/train_dep_ge60_balanced_DL_v11.parquet",
+    "120": "../flightrightdata/data/processed/train_dep_ge120_balanced_DL_v11.parquet"
   },
   "iterations": 6000,
   "depth": 8,
@@ -109,8 +109,7 @@
     "carrier_delay_rate_anomaly_7d",
     "cancel_rate_origin_last1d",
     "divert_rate_origin_last14d",
-    "flightnum_od_otp_rate_last14d",
-    "airline_cancel_rate_anomaly_7d"
+    "flightnum_od_otp_rate_last14d"
   ],
   "deploy_bundle_joblib_name": "dep_delay_bins_bundle_DL_100_v11.joblib"
 }

@@ -5,16 +5,21 @@
     "run": "python src/training/hyperparam_optimize.py data/dep_train_WN_100_v11_hpo.json --n-trials 10 --mode dep"
   },
   "_path_note": "All relative paths are resolved against DATA_ROOT (../flightrightdata/).",
-  "input_features_path": "data/processed/features_dep_WN_v11_hpo_unbalanced.parquet",
-  "eval_features_path": "data/processed/features_dep_WN_v11_hpo_eval_unbalanced.parquet",
-  "outdir": "data/models/dep_WN_100_v11_hpo/",
-  "thresholds": [15, 30, 60, 120],
+  "input_features_path": "../flightrightdata/data/processed/features_dep_WN_v11_hpo_unbalanced.parquet",
+  "eval_features_path": "../flightrightdata/data/processed/features_dep_WN_v11_hpo_eval_unbalanced.parquet",
+  "outdir": "../flightrightdata/data/models/dep_WN_100_v11_hpo/",
+  "thresholds": [
+    15,
+    30,
+    60,
+    120
+  ],
   "random_seed": 1337,
   "per_threshold_train_paths": {
-    "15": "data/processed/train_dep_ge15_balanced_WN_v11_hpo.parquet",
-    "30": "data/processed/train_dep_ge30_balanced_WN_v11_hpo.parquet",
-    "60": "data/processed/train_dep_ge60_balanced_WN_v11_hpo.parquet",
-    "120": "data/processed/train_dep_ge120_balanced_WN_v11_hpo.parquet"
+    "15": "../flightrightdata/data/processed/train_dep_ge15_balanced_WN_v11_hpo.parquet",
+    "30": "../flightrightdata/data/processed/train_dep_ge30_balanced_WN_v11_hpo.parquet",
+    "60": "../flightrightdata/data/processed/train_dep_ge60_balanced_WN_v11_hpo.parquet",
+    "120": "../flightrightdata/data/processed/train_dep_ge120_balanced_WN_v11_hpo.parquet"
   },
   "iterations": 2000,
   "depth": 8,

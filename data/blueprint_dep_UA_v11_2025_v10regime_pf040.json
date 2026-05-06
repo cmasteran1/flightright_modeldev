@@ -1,0 +1,130 @@
+{
+  "_comment": "v10-regime 2025 test: eval_frac=0.15, pos_frac=0.4. Isolates the root-cause config setting identified on WN dep (eval_frac was flipped from 0.15 in v10 to 0.85 in v11, causing ~-0.02 AUC). See exploration/reports/2026-04-20-v10-v11-shared-eval-auc.md",
+  "_workflow": {
+    "step_0": "python src/fetch_prune/collect_strike_cache.py",
+    "step_1": "python src/fetch_prune/prepare_dataset.py data/blueprint_dep_UA_v11_2025.json",
+    "step_2": "python src/fetch_prune/features_dep.py    data/blueprint_dep_UA_v11_2025.json"
+  },
+  "_path_note": "Output paths use 'data/...' (resolved against DATA_ROOT = ../flightrightdata/). Input/meta paths use '../flightrightdata/data/...' (resolved against REPO_ROOT).",
+  "target": "dep",
+  "input_flights_path": [
+    "../flightrightdata/data/raw_bts/Year=2025/Month=*/flights.parquet"
+  ],
+  "history_flights_path": [
+    "../flightrightdata/data/raw_bts/Year=2024/Month=1[0-2]/flights.parquet",
+    "../flightrightdata/data/raw_bts/Year=2025/Month=*/flights.parquet"
+  ],
+  "airports_csv": "../flightrightdata/data/meta/airports.csv",
+  "airports_filter_csv": "../flightrightdata/data/meta/airport_rankings/UA_top_100.csv",
+  "airlines": [
+    "UA"
+  ],
+  "start_date": "2025-01-01",
+  "end_date": "2025-12-31",
+  "weather": {
+    "daily": true,
+    "hourly_at_dep": true,
+    "dest_daily": false,
+    "dest_hourly_at_arr": false,
+    "cache_dir": "../flightrightdata/weather_cache",
+    "hourly_cache_dir": "../flightrightdata/weather_cache_hourly",
+    "historical_cache_dir": "../flightrightdata/weather_cache_historical"
+  },
+  "strike": {
+    "enabled": true,
+    "cache_path": "../flightrightdata/strike_cache/us_aviation_labor_actions.parquet"
+  },
+  "add_aircraft_type": false,
+  "add_aircraft_age": false,
+  "history_lookback_days": 60,
+  "output_enriched_unbalanced_path": "../flightrightdata/data/intermediate/UA_v11_2025_unbalanced.parquet",
+  "history_output_path": "../flightrightdata/data/intermediate/history_pool_dep_UA_v11_2025.parquet",
+  "features_dep": {
+    "holiday_windows": {
+      "thanksgiving": 2,
+      "christmas": 3
+    },
+    "n_recent_flightnum_od": 30,
+    "low_support_leq": 2,
+    "rolling_windows_days": [
+      1,
+      7,
+      14
+    ],
+    "hub_spillover": {
+      "airline": "UA",
+      "hubs": [
+        "EWR",
+        "IAH",
+        "ORD",
+        "DEN",
+        "SFO"
+      ]
+    },
+    "hub_weather": {
+      "enabled": false
+    },
+    "tail_history": {
+      "enabled": false
+    },
+    "dest_rolling": {
+      "enabled": true
+    },
+    "prior_leg": {
+      "enabled": false
+    },
+    "strike": {
+      "enabled": true,
+      "cache_path": "../flightrightdata/strike_cache/us_aviation_labor_actions.parquet"
+    },
+    "delay_median_last1": {
+      "enabled": true
+    },
+    "nas_rate_last1d": {
+      "enabled": false
+    },
+    "cancel_rate_last1d": {
+      "enabled": true
+    },
+    "divert_rate_last14d": {
+      "enabled": true
+    },
+    "otp_rate_last14d": {
+      "enabled": true
+    },
+    "cancel_anomaly_7d": {
+      "enabled": true
+    }
+  },
+  "output_features_unbalanced_path": "../flightrightdata/data/processed/features_dep_UA_v11_2025_unbalanced.parquet",
+  "balance": {
+    "thresholds": [
+      15,
+      30,
+      60,
+      120
+    ],
+    "delay_col": "DepDelayMinutes",
+    "pos_frac": 0.4
+  },
+  "feature_balance": {
+    "enabled": true,
+    "eval": {
+      "enabled": true,
+      "by": "random",
+      "eval_frac": 0.15,
+      "seed": 42,
+      "output_path": "../flightrightdata/data/processed/features_dep_UA_v11_2025_v10regime_eval_unbalanced.parquet"
+    },
+    "thresholds": [
+      15,
+      30,
+      60,
+      120
+    ],
+    "pos_frac": 0.4,
+    "seed": 42,
+    "output_template": "../flightrightdata/data/processed/train_dep_ge{thr}_balanced_UA_v11_2025_v10regime_pf040.parquet",
+    "max_rows": 3000000
+  }
+}

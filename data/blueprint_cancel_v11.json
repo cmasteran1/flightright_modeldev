@@ -3,8 +3,8 @@
   "_workflow": {
     "run": "python src/fetch_prune/prepare_cancel_dataset.py data/blueprint_cancel_v11.json"
   },
-  "input_flights_path": "data/raw_bts/",
-  "history_flights_path": "data/raw_bts/",
+  "input_flights_path": "../flightrightdata/data/raw_bts/",
+  "history_flights_path": "../flightrightdata/data/raw_bts/",
   "airlines": [
     "WN",
     "DL",
@@ -16,16 +16,16 @@
   "weather": {
     "daily": {
       "enabled": true,
-      "cache_dir": "data/weather_cache/daily"
+      "cache_dir": "../flightrightdata/data/weather_cache/daily"
     },
     "hourly_at_departure": {
       "enabled": true,
-      "cache_dir": "data/weather_cache/hourly"
+      "cache_dir": "../flightrightdata/data/weather_cache/hourly"
     }
   },
   "strike": {
     "enabled": true,
-    "cache_path": "data/strike_cache.json"
+    "cache_path": "../flightrightdata/data/strike_cache.json"
   },
   "features_dep": {
     "tail_and_flightnum_time": false,
@@ -65,17 +65,17 @@
       "enabled": true
     }
   },
-  "output_features_unbalanced_path": "data/processed/features_cancel_all_v11_unbalanced.parquet",
+  "output_features_unbalanced_path": "../flightrightdata/data/processed/features_cancel_all_v11_unbalanced.parquet",
   "feature_balance": {
     "eval": {
       "enabled": true,
       "eval_frac": 0.15,
-      "output_path": "data/processed/features_cancel_all_v11_eval_unbalanced.parquet"
+      "output_path": "../flightrightdata/data/processed/features_cancel_all_v11_eval_unbalanced.parquet"
     }
   },
   "balance": {
     "pos_frac": 0.2,
     "seed": 42,
-    "output_path": "data/processed/train_cancel_balanced_v11.parquet"
+    "output_path": "../flightrightdata/data/processed/train_cancel_balanced_v11.parquet"
   }
 }

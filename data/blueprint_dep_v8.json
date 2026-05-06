@@ -6,9 +6,7 @@
     "step_2": "python src/fetch_prune/features_dep.py    data/blueprint_dep_v8.json"
   },
   "_path_note": "Output paths use 'data/...' (resolved against DATA_ROOT = ../flightrightdata/). Input/meta paths use '../flightrightdata/data/...' (resolved against REPO_ROOT).",
-
   "target": "dep",
-
   "input_flights_path": [
     "../flightrightdata/data/raw_bts/Year=2024/Month=*/flights.parquet",
     "../flightrightdata/data/raw_bts/Year=2025/Month=*/flights.parquet"
@@ -18,47 +16,52 @@
     "../flightrightdata/data/raw_bts/Year=2024/Month=*/flights.parquet",
     "../flightrightdata/data/raw_bts/Year=2025/Month=*/flights.parquet"
   ],
-
-  "airports_csv":        "../flightrightdata/data/meta/airports.csv",
+  "airports_csv": "../flightrightdata/data/meta/airports.csv",
   "airports_filter_csv": "../flightrightdata/data/meta/airport_rankings/WN_top_100.csv",
-  "airlines": ["WN"],
+  "airlines": [
+    "WN"
+  ],
   "start_date": "2024-01-01",
-  "end_date":   "2025-11-30",
-
+  "end_date": "2025-11-30",
   "weather": {
-    "daily":                true,
-    "hourly_at_dep":        true,
-    "dest_daily":           false,
-    "dest_hourly_at_arr":   false,
-    "cache_dir":            "../flightrightdata/weather_cache",
-    "hourly_cache_dir":     "../flightrightdata/weather_cache_hourly",
+    "daily": true,
+    "hourly_at_dep": true,
+    "dest_daily": false,
+    "dest_hourly_at_arr": false,
+    "cache_dir": "../flightrightdata/weather_cache",
+    "hourly_cache_dir": "../flightrightdata/weather_cache_hourly",
     "historical_cache_dir": "../flightrightdata/weather_cache_historical"
   },
-
   "strike": {
-    "enabled":    true,
+    "enabled": true,
     "cache_path": "../flightrightdata/strike_cache/us_aviation_labor_actions.parquet"
   },
-
   "add_aircraft_type": false,
-  "add_aircraft_age":  false,
-
+  "add_aircraft_age": false,
   "history_lookback_days": 60,
-  "output_enriched_unbalanced_path": "data/intermediate/WN_v8_unbalanced.parquet",
-  "history_output_path":             "data/intermediate/history_pool_dep_WN_v8.parquet",
-
+  "output_enriched_unbalanced_path": "../flightrightdata/data/intermediate/WN_v8_unbalanced.parquet",
+  "history_output_path": "../flightrightdata/data/intermediate/history_pool_dep_WN_v8.parquet",
   "features_dep": {
     "holiday_windows": {
       "thanksgiving": 2,
-      "christmas":    3
+      "christmas": 3
     },
     "n_recent_flightnum_od": 30,
-    "low_support_leq":       2,
-    "rolling_windows_days":  [1, 7, 14],
-
+    "low_support_leq": 2,
+    "rolling_windows_days": [
+      1,
+      7,
+      14
+    ],
     "hub_spillover": {
       "airline": "WN",
-      "hubs": ["DEN", "PHX", "BWI", "MDW", "BNA"]
+      "hubs": [
+        "DEN",
+        "PHX",
+        "BWI",
+        "MDW",
+        "BNA"
+      ]
     },
     "hub_weather": {
       "enabled": false
@@ -73,30 +76,37 @@
       "enabled": false
     },
     "strike": {
-      "enabled":    true,
+      "enabled": true,
       "cache_path": "../flightrightdata/strike_cache/us_aviation_labor_actions.parquet"
     }
   },
-
-  "output_features_unbalanced_path": "data/processed/features_dep_WN_v8_unbalanced.parquet",
-
+  "output_features_unbalanced_path": "../flightrightdata/data/processed/features_dep_WN_v8_unbalanced.parquet",
   "balance": {
-    "thresholds": [15, 30, 45, 60],
-    "delay_col":  "DepDelayMinutes"
+    "thresholds": [
+      15,
+      30,
+      45,
+      60
+    ],
+    "delay_col": "DepDelayMinutes"
   },
-
   "feature_balance": {
     "enabled": true,
     "eval": {
-      "enabled":     true,
-      "by":          "random",
-      "eval_frac":   0.15,
-      "seed":        42,
-      "output_path": "data/processed/features_dep_WN_v8_eval_unbalanced.parquet"
+      "enabled": true,
+      "by": "random",
+      "eval_frac": 0.15,
+      "seed": 42,
+      "output_path": "../flightrightdata/data/processed/features_dep_WN_v8_eval_unbalanced.parquet"
     },
-    "thresholds":      [15, 30, 45, 60],
-    "pos_frac":        0.50,
-    "seed":            42,
-    "output_template": "data/processed/train_dep_ge{thr}_balanced_WN_v8.parquet"
+    "thresholds": [
+      15,
+      30,
+      45,
+      60
+    ],
+    "pos_frac": 0.5,
+    "seed": 42,
+    "output_template": "../flightrightdata/data/processed/train_dep_ge{thr}_balanced_WN_v8.parquet"
   }
 }

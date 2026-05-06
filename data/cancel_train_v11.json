@@ -5,9 +5,9 @@
     "run": "python src/training/train_cancellation_catboost.py data/cancel_train_v11.json"
   },
   "_path_note": "All relative paths are resolved against DATA_ROOT (../flightrightdata/).",
-  "input_features_path": "data/processed/train_cancel_balanced_v11.parquet",
-  "eval_features_path": "data/processed/features_cancel_all_v11_eval_unbalanced.parquet",
-  "outdir": "data/models/cancel_v11/",
+  "input_features_path": "../flightrightdata/data/processed/train_cancel_balanced_v11.parquet",
+  "eval_features_path": "../flightrightdata/data/processed/features_cancel_all_v11_eval_unbalanced.parquet",
+  "outdir": "../flightrightdata/data/models/cancel_v11/",
   "target_col": "Cancelled",
   "random_seed": 42,
   "pos_frac": 0.2,
@@ -80,8 +80,7 @@
     "carrier_delay_rate_anomaly_7d",
     "cancel_rate_origin_last1d",
     "divert_rate_origin_last14d",
-    "flightnum_od_otp_rate_last14d",
-    "airline_cancel_rate_anomaly_7d"
+    "flightnum_od_otp_rate_last14d"
   ],
   "iterations": 4000,
   "depth": 8,

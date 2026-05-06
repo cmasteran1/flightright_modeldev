@@ -5,9 +5,9 @@
     "run": "python src/training/train_arr_bins_ordinal_catboost.py data/arr_train_AA_100_v11.json"
   },
   "_path_note": "All relative paths resolved against DATA_ROOT (../flightrightdata/).",
-  "input_features_path": "data/processed/features_arr_AA_v11_unbalanced.parquet",
-  "eval_features_path": "data/processed/features_arr_AA_v11_eval_unbalanced.parquet",
-  "outdir": "data/models/arr_AA_100_v11/",
+  "input_features_path": "../flightrightdata/data/processed/features_arr_AA_v11_unbalanced.parquet",
+  "eval_features_path": "../flightrightdata/data/processed/features_arr_AA_v11_eval_unbalanced.parquet",
+  "outdir": "../flightrightdata/data/models/arr_AA_100_v11/",
   "thresholds": [
     15,
     30,
@@ -15,7 +15,7 @@
     120
   ],
   "feature_balance": {
-    "output_template": "data/processed/train_arr_ge{thr}_balanced_AA_v11.parquet"
+    "output_template": "../flightrightdata/data/processed/train_arr_ge{thr}_balanced_AA_v11.parquet"
   },
   "training": {
     "seed": 1337,
@@ -147,7 +147,6 @@
       "strike_severity",
       "days_to_strike",
       "carrier_delay_rate_anomaly_7d",
-      "origin_nasdelay_rate_last1d",
       "cancel_rate_origin_last1d",
       "divert_rate_origin_last14d"
     ]

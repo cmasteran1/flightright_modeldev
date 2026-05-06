@@ -43,8 +43,8 @@
   "add_aircraft_type": false,
   "add_aircraft_age": false,
   "history_lookback_days": 60,
-  "output_enriched_unbalanced_path": "data/intermediate/UA_v11_unbalanced.parquet",
-  "history_output_path": "data/intermediate/history_pool_dep_UA_v11.parquet",
+  "output_enriched_unbalanced_path": "../flightrightdata/data/intermediate/UA_v11_unbalanced.parquet",
+  "history_output_path": "../flightrightdata/data/intermediate/history_pool_dep_UA_v11.parquet",
   "features_dep": {
     "holiday_windows": {
       "thanksgiving": 2,
@@ -102,7 +102,7 @@
       "enabled": true
     }
   },
-  "output_features_unbalanced_path": "data/processed/features_dep_UA_v11_unbalanced.parquet",
+  "output_features_unbalanced_path": "../flightrightdata/data/processed/features_dep_UA_v11_unbalanced.parquet",
   "balance": {
     "thresholds": [
       15,
@@ -120,7 +120,7 @@
       "by": "random",
       "eval_frac": 0.15,
       "seed": 42,
-      "output_path": "data/processed/features_dep_UA_v11_eval_unbalanced.parquet"
+      "output_path": "../flightrightdata/data/processed/features_dep_UA_v11_eval_unbalanced.parquet"
     },
     "thresholds": [
       15,
@@ -130,7 +130,7 @@
     ],
     "pos_frac": 0.4,
     "seed": 42,
-    "output_template": "data/processed/train_dep_ge{thr}_balanced_UA_v11.parquet",
+    "output_template": "../flightrightdata/data/processed/train_dep_ge{thr}_balanced_UA_v11.parquet",
     "max_rows": 3000000
   }
 }
